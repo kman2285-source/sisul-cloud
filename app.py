@@ -42,7 +42,18 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 2. Firebase 데이터 불러오기 및 정렬
+# 클라우드 DB에서 열 순서 불러오기 설정
+settings_ref = db.collection("system").document("settings")
+settings_snap = settings_ref.get()
+
+if not settings_snap.exists:
+    initial_order = ["시설물명", "상태", "점검자", "최종점검일", "사진URL"]
+    settings_ref.set({"column_order": initial_order})
+    col_order = initial_order
+else:
+    col_order = settings_snap.to_dict().get("column_order", [])
+
+# 2. Firebase 데이터 불러오기
 @st.cache_data(ttl=3)
 def load_infra_data():
     docs = db.collection("infra_management").stream()
@@ -53,114 +64,121 @@ def load_infra_data():
         data_list.append(d)
     
     if not data_list:
-        initial_data = [
-            {"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"},
-            {"doc_id": "sample2", "시설물명": "범어 지하차도 배수펌프", "상태": "점검필요", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:01"}
-        ]
-        return pd.DataFrame(initial_data)
+        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"}])
     
     df_temp = pd.DataFrame(data_list)
     if "등록일시" not in df_temp.columns:
         df_temp["등록일시"] = "2000-01-01 00:00:00"
     df_temp["등록일시"] = df_temp["등록일시"].fillna("2000-01-01 00:00:00")
-    df_temp = df_temp.sort_values("등록일시", ascending=True).reset_index(drop=True)
-    return df_temp
+    return df_temp.sort_values("등록일시", ascending=True).reset_index(drop=True)
 
-try:
-    df = load_infra_data()
-    if "최종점검일" in df.columns:
-        df["최종점검일"] = pd.to_datetime(df["최종점검일"], errors="coerce").dt.date
-except Exception as e:
-    df = pd.DataFrame(columns=["doc_id", "시설물명", "상태", "점검자", "사진URL", "최종점검일", "등록일시"])
-    df["최종점검일"] = pd.to_datetime(df["최종점검일"]).dt.date
+df = load_infra_data()
 
-# ⚙️ 관리 메뉴 (항목 추가 및 이름 변경)
+for c in col_order:
+    if c not in df.columns:
+        df[c] = ""
+        
+rogue_cols = [c for c in df.columns if c not in col_order and c not in ["doc_id", "등록일시"]]
+if rogue_cols:
+    col_order.extend(rogue_cols)
+    settings_ref.update({"column_order": col_order})
+
+df = df[["doc_id", "등록일시"] + col_order]
+
+date_cols = [c for c in col_order if "일" in c or "날짜" in c]
+for dc in date_cols:
+    df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
+
+# ⚙️ 관리 메뉴 (항목 추가 및 전체 이름 변경 허용)
 col_mgmt1, col_mgmt2 = st.columns(2)
 
 with col_mgmt1:
     with st.expander("⚙️ 표 항목(열) 추가하기"):
         with st.form("add_column_form", clear_on_submit=True):
-            st.caption("비고, 연락처 등 새롭게 추가하고 싶은 항목 이름을 적어주세요.")
             new_col_name = st.text_input("새 항목 이름", placeholder="예: 비고")
-            submitted = st.form_submit_button("➕ 항목 추가")
-            
-            if submitted and new_col_name:
+            if st.form_submit_button("➕ 항목 추가") and new_col_name:
                 new_col_name = new_col_name.strip()
-                if new_col_name in df.columns:
-                    st.warning("이미 존재하는 항목입니다.")
-                elif new_col_name in ["doc_id", "등록일시"]:
+                if new_col_name in df.columns: 
+                    st.warning("이미 존재합니다.")
+                elif new_col_name in ["doc_id", "등록일시"]: 
                     st.error("시스템 예약어는 사용할 수 없습니다.")
                 else:
-                    with st.spinner("클라우드 DB에 새 항목을 추가하는 중..."):
+                    with st.spinner("항목 추가 중..."):
                         docs = db.collection("infra_management").stream()
-                        for doc in docs:
+                        for doc in docs: 
                             doc.reference.update({new_col_name: ""})
-                        st.success(f"'{new_col_name}' 항목이 표에 추가되었습니다!")
+                        col_order.append(new_col_name)
+                        settings_ref.update({"column_order": col_order})
                         st.cache_data.clear()
                         st.rerun()
 
 with col_mgmt2:
-    with st.expander("📝 표 항목(열) 이름 변경하기"):
-        custom_cols = [c for c in df.columns if c not in ["doc_id", "등록일시", "시설물명", "상태", "점검자", "최종점검일", "사진URL"]]
-        
-        if not custom_cols:
-            st.caption("💡 현재 이름을 바꿀 수 있는 커스텀 항목이 없습니다. 먼저 항목을 추가해 주세요.")
-        else:
-            with st.form("rename_column_form", clear_on_submit=True):
-                st.caption("기존에 추가했던 항목의 이름을 새 이름으로 변경합니다.")
-                old_name = st.selectbox("변경할 기존 항목 선택", custom_cols)
-                new_name = st.text_input("새로운 항목 이름", placeholder="예: 비고_수정")
-                rename_submitted = st.form_submit_button("✏️ 이름 변경 적용")
-                
-                if rename_submitted and old_name and new_name:
-                    new_name = new_name.strip()
-                    if new_name in df.columns:
-                        st.warning("이미 표에 존재하는 항목 이름입니다.")
-                    elif new_name in ["doc_id", "등록일시"]:
-                        st.error("시스템 예약어는 사용할 수 없습니다.")
-                    else:
-                        with st.spinner("클라우드 데이터 이전 및 이름 변경 중..."):
-                            docs = db.collection("infra_management").stream()
-                            for doc in docs:
-                                doc_data = doc.to_dict()
-                                if old_name in doc_data:
-                                    doc.reference.update({
-                                        new_name: doc_data[old_name],
-                                        old_name: firestore.DELETE_FIELD
-                                    })
-                            st.success(f"'{old_name}' 항목이 '{new_name}'(으)로 일괄 변경되었습니다!")
-                            st.cache_data.clear()
-                            st.rerun()
+    with st.expander("📝 표 항목(열) 일괄 이름 변경"):
+        with st.form("rename_column_form", clear_on_submit=True):
+            st.caption("기존에 있던 모든 항목의 이름을 자유롭게 바꿀 수 있습니다.")
+            old_name = st.selectbox("변경할 기존 항목 선택", col_order)
+            new_name = st.text_input("새로운 항목 이름", placeholder="예: 변경할 이름 입력")
+            
+            if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
+                new_name = new_name.strip()
+                if new_name in df.columns: 
+                    st.warning("이미 표에 존재하는 이름입니다.")
+                elif new_name in ["doc_id", "등록일시"]: 
+                    st.error("시스템 예약어는 사용할 수 없습니다.")
+                else:
+                    with st.spinner("데이터 이전 및 이름 변경 중..."):
+                        docs = db.collection("infra_management").stream()
+                        for doc in docs:
+                            d_dict = doc.to_dict()
+                            if old_name in d_dict:
+                                doc.reference.update({
+                                    new_name: d_dict[old_name],
+                                    old_name: firestore.DELETE_FIELD
+                                })
+                        idx = col_order.index(old_name)
+                        col_order[idx] = new_name
+                        settings_ref.update({"column_order": col_order})
+                        st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
+                        st.cache_data.clear()
+                        st.rerun()
 
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-st.caption("💡 **[삭제 방법]** 모바일에서는 왼쪽의 체크박스를 여러 개 선택하거나, PC에서는 마우스 드래그 후 키보드의 **Delete** 키를 누르면 클라우드 DB와 사진이 동시 삭제됩니다.")
+st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
-# 🎯 [핵심 수정] 커스텀 열 이름들을 가나다순으로 강력하게 정렬(sorted)하여 NoSQL의 랜덤 섞임을 원천 차단합니다.
-base_cols = ["시설물명", "상태", "점검자", "최종점검일", "사진URL"]
-for col in base_cols:
-    if col not in df.columns:
-        df[col] = ""
+# 동적 열 서식 지정
+dynamic_config = {"doc_id": None, "등록일시": None}
+for c in col_order:
+    if "상태" in c:
+        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"], required=True)
+    elif "사진" in c or "URL" in c or "링크" in c:
+        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
+    elif "일" in c or "날짜" in c:
+        dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
 
-# sorted() 함수를 씌워 추가된 열들이 무조건 고정된 순서로 나타나게 만듭니다.
-extra_cols = sorted([c for c in df.columns if c not in base_cols + ["doc_id", "등록일시"]])
-final_column_order = base_cols + extra_cols
-df = df[["doc_id", "등록일시"] + final_column_order]
-
-# 3. 엑셀 형태 UI (모바일 최적화)
+# 3. 엑셀 형태 UI
 edited_df = st.data_editor(
     df,
-    column_order=final_column_order,
-    column_config={
-        "doc_id": None,
-        "등록일시": None,
-        "상태": st.column_config.SelectboxColumn("상태", options=["정상", "점검필요", "정비중", "조치완료"], required=True),
-        "사진URL": st.column_config.LinkColumn("현장사진 링크", display_text="📸 사진 보기", disabled=True),
-        "최종점검일": st.column_config.DateColumn("최종점검일", default=datetime.now().date())
-    },
+    column_order=col_order,
+    column_config=dynamic_config,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True,  # 🎯 모바일 화면을 낭비하던 맨 왼쪽 행 번호(0,1,2)를 깔끔하게 숨깁니다.
+    hide_index=True,
     key="infra_table_editor"
+)
+
+# 🎯 [신규 기능] 엑셀 다운로드 전용 버튼 배치 (한글 깨짐 완벽 방지)
+st.markdown(" ") 
+# 시스템 정보용 열(doc_id, 등록일시)은 제외하고 사용자가 고친 이쁜 데이터만 추출하여 엑셀 변환
+export_df = edited_df[col_order].copy()
+csv_data = export_df.to_csv(index=False).encode('utf-8-sig') # utf-8-sig 인코딩이 엑셀 한글 안깨지게 하는 마법의 명령어입니다.
+
+st.download_button(
+    label="📥 현재 표 데이터 다운로드 (Excel 호환)",
+    data=csv_data,
+    file_name=f"인프라_인벤토리_현황_{datetime.now().strftime('%Y%m%d')}.csv",
+    mime="text/csv",
+    use_container_width=True,
+    type="secondary"
 )
 
 # 4. 실시간 동기화
@@ -171,25 +189,29 @@ if "infra_table_editor" in st.session_state:
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
             doc_id = df.iloc[int(row_idx)]["doc_id"]
+            for k, v in changes.items():
+                if isinstance(v, type(datetime.now().date())):
+                    changes[k] = str(v)
+
             if str(doc_id).startswith("sample"):
                 row_full = df.iloc[int(row_idx)].to_dict()
                 row_full.update(changes)
                 if "doc_id" in row_full: del row_full["doc_id"]
-                row_full["최종점검일"] = str(row_full.get("최종점검일", datetime.now().date()))
                 row_full["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+                for dc in date_cols:
+                    if dc in row_full: row_full[dc] = str(row_full.get(dc, datetime.now().date()))
                 row_full = {k: ("" if pd.isna(v) else v) for k, v in row_full.items()}
                 db.collection("infra_management").add(row_full)
             else:
-                if "최종점검일" in changes:
-                    changes["최종점검일"] = str(changes["최종점검일"])
                 db.collection("infra_management").document(str(doc_id)).update(changes)
         has_changes = True
                 
     if editor_state.get("added_rows"):
         for row in editor_state["added_rows"]:
             row_data = row.copy()
-            row_data["최종점검일"] = str(row_data.get("최종점검일", datetime.now().date()))
             row_data["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            for dc in date_cols:
+                if dc in row_data: row_data[dc] = str(row_data.get(dc, datetime.now().date()))
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             db.collection("infra_management").add(row_data)
         has_changes = True
@@ -202,12 +224,14 @@ if "infra_table_editor" in st.session_state:
                     doc_ref = db.collection("infra_management").document(str(doc_id))
                     doc_snap = doc_ref.get()
                     if doc_snap.exists:
-                        photo_url = doc_snap.to_dict().get("사진URL", "")
-                        if photo_url and "sisul-2026.firebasestorage.app/" in photo_url:
-                            blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
-                            try:
-                                bucket.blob(blob_name).delete()
-                            except Exception: pass
+                        doc_data = doc_snap.to_dict()
+                        photo_col_name = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
+                        if photo_col_name:
+                            photo_url = doc_data.get(photo_col_name, "")
+                            if photo_url and "sisul-2026.firebasestorage.app/" in photo_url:
+                                blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
+                                try: bucket.blob(blob_name).delete()
+                                except Exception: pass
                     doc_ref.delete()
                 except Exception as e:
                     st.error(f"데이터 파기 실패: {e}")
@@ -222,34 +246,40 @@ st.markdown("---")
 # 5. 모바일 현장 사진 업로드
 st.subheader("📸 모바일 현장 점검 사진 등록")
 
-facility_list = edited_df["시설물명"].dropna().unique()
-if len(facility_list) > 0:
-    target_facility = st.selectbox("사진을 매핑할 시설물을 선택하세요:", facility_list)
-    uploaded_file = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진을 선택하세요.", type=["jpg", "jpeg", "png"])
-    
-    if uploaded_file is not None:
-        if st.button("🚀 선택한 시설물에 사진 등록", type="secondary"):
-            with st.spinner("이미지 전송 중..."):
-                try:
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    file_name = f"infra_photos/{target_facility}_{timestamp}.png"
-                    
-                    blob = bucket.blob(file_name)
-                    blob.upload_from_string(uploaded_file.read(), content_type="image/png")
-                    blob.make_public()
-                    public_url = blob.public_url
-                    
-                    target_row = edited_df[edited_df["시설물명"] == target_facility]
-                    if not target_row.empty:
-                        target_doc_id = str(target_row.iloc[0]["doc_id"])
-                        if target_doc_id in ["", "nan", "None", "<NA>"] or target_doc_id.startswith("sample"):
-                            st.warning("시설물명을 먼저 입력하신 후, 셀 바깥을 클릭하여 DB에 자동 등록된 상태에서 사진을 올려주세요.")
-                        else:
-                            db.collection("infra_management").document(target_doc_id).update({"사진URL": public_url})
-                            st.success(f"🎉 {target_facility}에 사진 등록 및 실시간 매핑 완료!")
-                            st.cache_data.clear()
-                            st.rerun()
-                except Exception as e:
-                    st.error(f"사진 매핑 실패: {e}")
+main_col = col_order[0] 
+photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
+
+if photo_col:
+    facility_list = edited_df[main_col].dropna().unique()
+    if len(facility_list) > 0:
+        target_facility = st.selectbox(f"사진을 매핑할 [{main_col}]을(를) 선택하세요:", facility_list)
+        uploaded_file = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진을 선택하세요.", type=["jpg", "jpeg", "png"])
+        
+        if uploaded_file is not None:
+            if st.button(f"🚀 선택한 [{main_col}]에 사진 등록", type="secondary"):
+                with st.spinner("이미지 전송 중..."):
+                    try:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        file_name = f"infra_photos/{target_facility}_{timestamp}.png"
+                        
+                        blob = bucket.blob(file_name)
+                        blob.upload_from_string(uploaded_file.read(), content_type="image/png")
+                        blob.make_public()
+                        public_url = blob.public_url
+                        
+                        target_row = edited_df[edited_df[main_col] == target_facility]
+                        if not target_row.empty:
+                            target_doc_id = str(target_row.iloc[0]["doc_id"])
+                            if target_doc_id in ["", "nan", "None", "<NA>"] or target_doc_id.startswith("sample"):
+                                st.warning("먼저 입력하신 후, 셀 바깥을 클릭하여 DB에 자동 등록된 상태에서 사진을 올려주세요.")
+                            else:
+                                db.collection("infra_management").document(target_doc_id).update({photo_col: public_url})
+                                st.success(f"🎉 {target_facility}에 사진 등록 및 실시간 매핑 완료!")
+                                st.cache_data.clear()
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"사진 매핑 실패: {e}")
+    else:
+        st.info(f"엑셀 그리드에 [{main_col}]을(를) 먼저 입력해 주세요.")
 else:
-    st.info("엑셀 그리드에 시설물을 먼저 입력해 주세요.")
+    st.warning("이름에 '사진', 'URL', '링크' 중 하나가 포함된 항목(열)이 있어야 사진을 매핑할 수 있습니다.")
