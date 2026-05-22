@@ -33,7 +33,7 @@ with st.sidebar:
         total_bytes = sum(blob.size for blob in blobs if blob.size is not None)
         
         used_mb = round(total_bytes / (1024 * 1024), 1)
-        total_mb = 5120.0  
+        total_mb = 5120.0  # 5GB 무료 한도
         left_mb = round(total_mb - used_mb, 1)
         
         usage_percent = used_mb / total_mb
@@ -52,7 +52,7 @@ with st.sidebar:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
 # 2. Firebase Firestore에서 실시간 데이터 불러오기 함수
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=3)
 def load_infra_data():
     docs = db.collection("infra_management").stream()
     data_list = []
@@ -79,15 +79,19 @@ except Exception as e:
     df["최종점검일"] = pd.to_datetime(df["최종점검일"]).dt.date
 
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-st.caption("💡 셀을 더블클릭하여 내용을 직접 수정하거나, 맨 아래 행에서 새로운 시설물을 추가할 수 있습니다.")
+st.caption("💡 엑셀처럼 여러 행을 마우스로 드래그 선택한 뒤 키보드의 Delete 키를 누르면, 클라우드 DB와 사진 파일이 동시 삭제됩니다.")
 
 # 3. 엑셀 형태의 인터랙티브 데이터 에디터 UI
 edited_df = st.data_editor(
     df,
+    column_order=["시설물명", "상태", "점검자", "최종점검일", "사진URL"],
     column_config={
         "doc_id": None,
         "상태": st.column_config.SelectboxColumn("상태", options=["정상", "점검필요", "정비중", "조치완료"], required=True),
-        "사진URL": st.column_config.LinkColumn("현장사진 링크", display_text="📸 사진 보기"),
+        
+        # 🎯 [핵심 개선] disabled=True 를 추가하여 모바일 터치 시 글자 수정 모드로 빠지는 현상을 완벽 차단합니다!
+        "사진URL": st.column_config.LinkColumn("현장사진 링크", display_text="📸 사진 보기", disabled=True),
+        
         "최종점검일": st.column_config.DateColumn("최종점검일", default=datetime.now().date())
     },
     num_rows="dynamic",
@@ -95,32 +99,76 @@ edited_df = st.data_editor(
     key="infra_table_editor"
 )
 
-# 4. 엑셀 수정 내용 데이터베이스 영구 저장 로직
-col1, col2 = st.columns([1, 5])
-with col1:
-    if st.button("💾 변경사항 저장", type="primary"):
-        with st.spinner("클라우드 데이터베이스 동기화 중..."):
-            try:
-                for index, row in edited_df.iterrows():
-                    inspect_date = str(row["최종점검일"]) if pd.notna(row["최종점검일"]) else datetime.now().strftime("%Y-%m-%d")
-                    row_data = {
-                        "시설물명": row["시설물명"] if pd.notna(row["시설물명"]) else "이름 없음",
-                        "상태": row["상태"] if pd.notna(row["상태"]) else "정상",
-                        "점검자": row["점검자"] if pd.notna(row["점검자"]) else "미지정",
-                        "사진URL": row["사진URL"] if pd.notna(row["사진URL"]) else "",
-                        "최종점검일": inspect_date
-                    }
-                    
-                    if pd.isna(row["doc_id"]) or str(row["doc_id"]).startswith("sample") or row["doc_id"] == "":
-                        db.collection("infra_management").add(row_data)
-                    else:
-                        db.collection("infra_management").document(str(row["doc_id"])).set(row_data)
+# 4. 사용자가 수정한 변화(수정, 추가, 삭제)를 감지하여 실시간으로 Firebase 동기화
+if "infra_table_editor" in st.session_state:
+    editor_state = st.session_state["infra_table_editor"]
+    has_changes = False
+    
+    # A. 셀 내용이 수정되었을 때
+    if editor_state.get("edited_rows"):
+        for row_idx, changes in editor_state["edited_rows"].items():
+            doc_id = df.iloc[int(row_idx)]["doc_id"]
+            
+            if str(doc_id).startswith("sample"):
+                row_full = df.iloc[int(row_idx)].to_dict()
+                row_full.update(changes)
+                row_data = {
+                    "시설물명": row_full.get("시설물명", "이름 없음"),
+                    "상태": row_full.get("상태", "정상"),
+                    "점검자": row_full.get("점검자", "미지정"),
+                    "사진URL": row_full.get("사진URL", ""),
+                    "최종점검일": str(row_full.get("최종점검일", datetime.now().date()))
+                }
+                db.collection("infra_management").add(row_data)
+            else:
+                if "최종점검일" in changes:
+                    changes["최종점검일"] = str(changes["최종점검일"])
+                db.collection("infra_management").document(str(doc_id)).update(changes)
+        has_changes = True
                 
-                st.success("데이터베이스에 영구 저장되었습니다!")
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as e:
-                st.error(f"데이터 저장 중 오류 발생: {e}")
+    # B. 새로운 시설물 행이 추가되었을 때
+    if editor_state.get("added_rows"):
+        for row in editor_state["added_rows"]:
+            row_data = {
+                "시설물명": row.get("시설물명", "이름 없음"),
+                "상태": row.get("상태", "정상"),
+                "점검자": row.get("점검자", "미지정"),
+                "사진URL": row.get("사진URL", ""),
+                "최종점검일": str(row.get("최종점검일", datetime.now().date()))
+            }
+            db.collection("infra_management").add(row_data)
+        has_changes = True
+            
+    # C. 행을 삭제했을 때 (DB + 원본 사진 동시 파기)
+    if editor_state.get("deleted_rows"):
+        for row_idx in editor_state["deleted_rows"]:
+            doc_id = df.iloc[int(row_idx)]["doc_id"]
+            
+            if not str(doc_id).startswith("sample"):
+                try:
+                    doc_ref = db.collection("infra_management").document(str(doc_id))
+                    doc_snap = doc_ref.get()
+                    
+                    if doc_snap.exists:
+                        doc_data = doc_snap.to_dict()
+                        photo_url = doc_data.get("사진URL", "")
+                        
+                        if photo_url:
+                            bucket_domain = "sisul-2026.firebasestorage.app/"
+                            if bucket_domain in photo_url:
+                                blob_name = photo_url.split(bucket_domain)[-1]
+                                try:
+                                    bucket.blob(blob_name).delete()
+                                except Exception:
+                                    pass
+                    doc_ref.delete()
+                except Exception as e:
+                    st.error(f"실시간 데이터 파기 실패: {e}")
+        has_changes = True
+                
+    if has_changes:
+        st.cache_data.clear()
+        st.rerun()
 
 st.markdown("---")
 
@@ -139,31 +187,27 @@ if len(facility_list) > 0:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     file_name = f"infra_photos/{target_facility}_{timestamp}.png"
                     
-                    # 1. Firebase Storage에 사진 업로드
                     blob = bucket.blob(file_name)
                     blob.upload_from_string(uploaded_file.read(), content_type="image/png")
                     blob.make_public()
                     public_url = blob.public_url
                     
-                    # 2. [버그 해결!] 한글 이름으로 DB를 검색하는 대신, 엑셀 표에서 고유 영문 ID를 직접 찾아 매핑
                     target_row = edited_df[edited_df["시설물명"] == target_facility]
                     
                     if not target_row.empty:
                         target_doc_id = str(target_row.iloc[0]["doc_id"])
                         
-                        # 아직 DB에 저장이 안 된 임시 데이터(sample 등)인 경우 차단
                         if target_doc_id in ["", "nan", "None", "<NA>"] or target_doc_id.startswith("sample"):
-                            st.warning("엑셀 표에서 먼저 '💾 변경사항 저장' 버튼을 눌러 해당 시설물을 DB에 등록한 후 사진을 올려주세요.")
+                            st.warning("시설물명을 먼저 입력하신 후, 셀 바깥을 클릭하여 DB에 자동 등록된 상태에서 사진을 올려주세요.")
                         else:
-                            # 오류를 뿜던 where() 검색 기능을 버리고, 고유 ID(target_doc_id)로 다이렉트 업데이트
                             db.collection("infra_management").document(target_doc_id).update({
                                 "사진URL": public_url
                             })
-                            st.success(f"🎉 {target_facility}에 사진 등록 및 엑셀 주소 매핑이 완료되었습니다!")
+                            st.success(f"🎉 {target_facility}에 사진 등록 및 실시간 매핑이 완료되었습니다!")
                             st.cache_data.clear()
                             st.rerun()
                             
                 except Exception as e:
                     st.error(f"사진 매핑 실패: {e}")
 else:
-    st.info("엑셀 그리드에 시설물을 먼저 입력하고 저장해 주세요.")
+    st.info("엑셀 그리드에 시설물을 먼저 입력해 주세요.")
