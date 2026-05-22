@@ -42,7 +42,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 설정 (NoSQL 열 뒤섞임 방지)
+# 🎯 클라우드 DB에서 열 순서 불러오기 (흔들림 방지)
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -64,7 +64,6 @@ def load_infra_data():
         data_list.append(d)
     
     if not data_list:
-        # 🎯 오타 수정 완료: "점검자": "관리자" 형태로 정상 복구되었습니다.
         return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"}])
     
     df_temp = pd.DataFrame(data_list)
@@ -75,6 +74,7 @@ def load_infra_data():
 
 df = load_infra_data()
 
+# DB 데이터와 설정된 열 순서 동기화
 for c in col_order:
     if c not in df.columns:
         df[c] = ""
@@ -90,59 +90,82 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# ⚙️ 관리 메뉴 (항목 추가 및 전체 이름 변경 허용)
-col_mgmt1, col_mgmt2 = st.columns(2)
+# ⚙️ 관리 메뉴 (3개의 탭으로 깔끔하게 분리)
+st.subheader("⚙️ 표 기본 설정 관리")
+tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
-with col_mgmt1:
-    with st.expander("⚙️ 표 항목(열) 추가하기"):
-        with st.form("add_column_form", clear_on_submit=True):
-            new_col_name = st.text_input("새 항목 이름", placeholder="예: 비고")
-            if st.form_submit_button("➕ 항목 추가") and new_col_name:
-                new_col_name = new_col_name.strip()
-                if new_col_name in df.columns: 
-                    st.warning("이미 존재합니다.")
-                elif new_col_name in ["doc_id", "등록일시"]: 
-                    st.error("시스템 예약어는 사용할 수 없습니다.")
-                else:
-                    with st.spinner("항목 추가 중..."):
-                        docs = db.collection("infra_management").stream()
-                        for doc in docs: 
-                            doc.reference.update({new_col_name: ""})
-                        col_order.append(new_col_name)
-                        settings_ref.update({"column_order": col_order})
-                        st.cache_data.clear()
-                        st.rerun()
+with tab1:
+    with st.form("add_column_form", clear_on_submit=True):
+        new_col_name = st.text_input("새 항목 이름", placeholder="예: 점검 내용")
+        if st.form_submit_button("➕ 항목 추가") and new_col_name:
+            new_col_name = new_col_name.strip()
+            if new_col_name in df.columns: 
+                st.warning("이미 존재합니다.")
+            elif new_col_name in ["doc_id", "등록일시"]: 
+                st.error("시스템 예약어는 사용할 수 없습니다.")
+            else:
+                with st.spinner("항목 추가 중..."):
+                    docs = db.collection("infra_management").stream()
+                    for doc in docs: doc.reference.update({new_col_name: ""})
+                    col_order.append(new_col_name)
+                    settings_ref.update({"column_order": col_order})
+                    st.cache_data.clear()
+                    st.rerun()
 
-with col_mgmt2:
-    with st.expander("📝 표 항목(열) 일괄 이름 변경"):
-        with st.form("rename_column_form", clear_on_submit=True):
-            st.caption("기존에 있던 모든 항목의 이름을 자유롭게 바꿀 수 있습니다.")
-            old_name = st.selectbox("변경할 기존 항목 선택", col_order)
-            new_name = st.text_input("새로운 항목 이름", placeholder="예: 변경할 이름 입력")
-            
-            if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
-                new_name = new_name.strip()
-                if new_name in df.columns: 
-                    st.warning("이미 표에 존재하는 이름입니다.")
-                elif new_name in ["doc_id", "등록일시"]: 
-                    st.error("시스템 예약어는 사용할 수 없습니다.")
-                else:
-                    with st.spinner("데이터 이전 및 이름 변경 중..."):
-                        docs = db.collection("infra_management").stream()
-                        for doc in docs:
-                            d_dict = doc.to_dict()
-                            if old_name in d_dict:
-                                doc.reference.update({
-                                    new_name: d_dict[old_name],
-                                    old_name: firestore.DELETE_FIELD
-                                })
-                        idx = col_order.index(old_name)
-                        col_order[idx] = new_name
-                        settings_ref.update({"column_order": col_order})
-                        st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
-                        st.cache_data.clear()
-                        st.rerun()
+with tab2:
+    with st.form("rename_column_form", clear_on_submit=True):
+        st.caption("기존 항목의 이름을 서버 전체에서 안전하게 바꿉니다.")
+        old_name = st.selectbox("변경할 기존 항목 선택", col_order)
+        new_name = st.text_input("새로운 항목 이름", placeholder="예: 점검결과")
+        if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
+            new_name = new_name.strip()
+            if new_name in df.columns: 
+                st.warning("이미 표에 존재하는 이름입니다.")
+            elif new_name in ["doc_id", "등록일시"]: 
+                st.error("시스템 예약어는 사용할 수 없습니다.")
+            else:
+                with st.spinner("데이터 이전 및 이름 변경 중..."):
+                    docs = db.collection("infra_management").stream()
+                    for doc in docs:
+                        d_dict = doc.to_dict()
+                        if old_name in d_dict:
+                            doc.reference.update({
+                                new_name: d_dict[old_name],
+                                old_name: firestore.DELETE_FIELD
+                            })
+                    idx = col_order.index(old_name)
+                    col_order[idx] = new_name
+                    settings_ref.update({"column_order": col_order})
+                    st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
+                    st.cache_data.clear()
+                    st.rerun()
 
+with tab3:
+    st.caption("💡 화면에서 마우스로 끌어다 놓은 임시 순서 대신, 여기서 버튼으로 이동시켜 서버에 영구적으로 고정하세요.")
+    selected_col = st.selectbox("↔️ 자리를 이동할 항목(열) 선택", col_order)
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("⬅️ 왼쪽(앞)으로 이동", use_container_width=True):
+            idx = col_order.index(selected_col)
+            if idx > 0:
+                col_order[idx], col_order[idx-1] = col_order[idx-1], col_order[idx]
+                settings_ref.update({"column_order": col_order})
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning("이미 맨 앞에 있습니다.")
+    with col_btn2:
+        if st.button("➡️ 오른쪽(뒤)으로 이동", use_container_width=True):
+            idx = col_order.index(selected_col)
+            if idx < len(col_order) - 1:
+                col_order[idx], col_order[idx+1] = col_order[idx+1], col_order[idx]
+                settings_ref.update({"column_order": col_order})
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning("이미 맨 뒤에 있습니다.")
+
+st.markdown("---")
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
 st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
@@ -167,7 +190,7 @@ edited_df = st.data_editor(
     key="infra_table_editor"
 )
 
-# 📥 엑셀 다운로드 전용 버튼 배치 (한글 깨짐 완벽 방지)
+# 📥 엑셀 다운로드 (한글 깨짐 방지)
 st.markdown(" ") 
 export_df = edited_df[col_order].copy()
 csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
@@ -181,7 +204,7 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 실시간 동기화
+# 4. 실시간 동기화 로직
 if "infra_table_editor" in st.session_state:
     editor_state = st.session_state["infra_table_editor"]
     has_changes = False
