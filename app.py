@@ -48,11 +48,15 @@ def load_infra_data():
     
     return pd.DataFrame(data_list)
 
-# 데이터 로드
+# 💡 [에러 해결 부분] 데이터 로드 및 날짜 데이터 타입 강제 변환
 try:
     df = load_infra_data()
+    # '최종점검일' 열이 존재하면, 일반 텍스트를 달력 UI가 인식할 수 있는 날짜(Date) 형식으로 변환합니다.
+    if "최종점검일" in df.columns:
+        df["최종점검일"] = pd.to_datetime(df["최종점검일"], errors="coerce").dt.date
 except Exception as e:
     df = pd.DataFrame(columns=["doc_id", "시설물명", "상태", "점검자", "사진URL", "최종점검일"])
+    df["최종점검일"] = pd.to_datetime(df["최종점검일"]).dt.date
 
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
 st.caption("💡 셀을 더블클릭하여 내용을 직접 수정하거나, 맨 아래 행에서 새로운 시설물을 추가할 수 있습니다.")
@@ -83,7 +87,7 @@ with col1:
             try:
                 # 데이터프레임 내 모든 행을 순회하며 Firestore에 반영
                 for index, row in edited_df.iterrows():
-                    # 날짜 형식 문자열 변환
+                    # DB에 넣을 때는 다시 텍스트(문자열)로 변환해서 안전하게 저장
                     inspect_date = str(row["최종점검일"]) if pd.notna(row["최종점검일"]) else datetime.now().strftime("%Y-%m-%d")
                     
                     row_data = {
@@ -95,11 +99,11 @@ with col1:
                     }
                     
                     # 신규 행 추가이거나 샘플 데이터인 경우 새로 생성
-                    if pd.isna(row["doc_id"]) or row["doc_id"].startswith("sample") or row["doc_id"] == "":
+                    if pd.isna(row["doc_id"]) or str(row["doc_id"]).startswith("sample") or row["doc_id"] == "":
                         db.collection("infra_management").add(row_data)
                     else:
                         # 기존에 존재하던 행은 덮어쓰기 수정
-                        db.collection("infra_management").document(row["doc_id"]).set(row_data)
+                        db.collection("infra_management").document(str(row["doc_id"])).set(row_data)
                 
                 st.success("데이터베이스에 영구 저장되었습니다!")
                 st.cache_data.clear()  # 캐시를 비워 화면 강제 갱신
