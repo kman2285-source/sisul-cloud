@@ -42,7 +42,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 설정
+# 클라우드 DB에서 열 순서 불러오기 설정 (NoSQL 열 뒤섞임 방지)
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -64,7 +64,8 @@ def load_infra_data():
         data_list.append(d)
     
     if not data_list:
-        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"}])
+        # 🎯 오타 수정 완료: "점검자": "관리자" 형태로 정상 복구되었습니다.
+        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"}])
     
     df_temp = pd.DataFrame(data_list)
     if "등록일시" not in df_temp.columns:
@@ -166,11 +167,10 @@ edited_df = st.data_editor(
     key="infra_table_editor"
 )
 
-# 🎯 [신규 기능] 엑셀 다운로드 전용 버튼 배치 (한글 깨짐 완벽 방지)
+# 📥 엑셀 다운로드 전용 버튼 배치 (한글 깨짐 완벽 방지)
 st.markdown(" ") 
-# 시스템 정보용 열(doc_id, 등록일시)은 제외하고 사용자가 고친 이쁜 데이터만 추출하여 엑셀 변환
 export_df = edited_df[col_order].copy()
-csv_data = export_df.to_csv(index=False).encode('utf-8-sig') # utf-8-sig 인코딩이 엑셀 한글 안깨지게 하는 마법의 명령어입니다.
+csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
 
 st.download_button(
     label="📥 현재 표 데이터 다운로드 (Excel 호환)",
