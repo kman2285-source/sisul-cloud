@@ -4,7 +4,6 @@ import firebase_admin
 from firebase_admin import credentials, firestore, storage
 import json
 from datetime import datetime
-import numpy as np
 
 # 페이지 기본 설정
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
@@ -75,7 +74,7 @@ except Exception as e:
     df = pd.DataFrame(columns=["doc_id", "시설물명", "상태", "점검자", "사진URL", "최종점검일", "등록일시"])
     df["최종점검일"] = pd.to_datetime(df["최종점검일"]).dt.date
 
-# 🎯 [신규 기능] 표에 새로운 열(항목) 추가하기
+# ⚙️ 표에 새로운 열(항목) 추가하기
 with st.expander("⚙️ 표 항목(열) 추가하기"):
     with st.form("add_column_form", clear_on_submit=True):
         st.caption("비고, 연락처, 점검결과 등 엑셀에 새롭게 추가하고 싶은 항목 이름을 적어주세요.")
@@ -90,7 +89,6 @@ with st.expander("⚙️ 표 항목(열) 추가하기"):
                 st.error("시스템 예약어는 사용할 수 없습니다.")
             else:
                 with st.spinner("클라우드 DB에 새 항목을 추가하는 중..."):
-                    # DB에 있는 모든 문서에 새 항목(빈칸)을 일괄 적용
                     docs = db.collection("infra_management").stream()
                     for doc in docs:
                         doc.reference.update({new_col_name: ""})
@@ -99,16 +97,26 @@ with st.expander("⚙️ 표 항목(열) 추가하기"):
                     st.rerun()
 
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
+# 🎯 [복구 완료] 지워졌던 다중 삭제 기능 안내 문구를 다시 넣었습니다!
+st.caption("💡 **[삭제 방법]** 엑셀처럼 여러 행을 마우스로 드래그 선택한 뒤 키보드의 **Delete** 키를 누르면, 클라우드 DB와 사진 파일이 동시 삭제됩니다.")
 
-# 🎯 동적 열 배치 로직: 기본 열은 고정하고, 사용자가 추가한 열은 뒤쪽으로 자동 배치
+# 🎯 [강화된 열 고정 로직] 데이터프레임 자체의 뼈대 순서를 미리 강제로 맞춰버립니다.
 base_cols = ["시설물명", "상태", "점검자", "최종점검일", "사진URL"]
+# 만약 DB에 기본 열이 누락되어 있다면 빈칸으로 강제 생성
+for col in base_cols:
+    if col not in df.columns:
+        df[col] = ""
+
 extra_cols = [c for c in df.columns if c not in base_cols + ["doc_id", "등록일시"]]
 final_column_order = base_cols + extra_cols
+
+# 데이터프레임의 실제 열 순서를 final_column_order에 맞게 재배치 (오류 원천 차단)
+df = df[["doc_id", "등록일시"] + final_column_order]
 
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
     df,
-    column_order=final_column_order, # 기본열 + 사용자가 새로 추가한 열 자동 순서 반영
+    column_order=final_column_order, # 흔들림 없이 고정된 순서 적용
     column_config={
         "doc_id": None,
         "등록일시": None,
@@ -121,7 +129,7 @@ edited_df = st.data_editor(
     key="infra_table_editor"
 )
 
-# 4. 실시간 동기화 (어떤 열이 추가되더라도 유연하게 저장되도록 동적 코드로 완전 개편)
+# 4. 실시간 동기화
 if "infra_table_editor" in st.session_state:
     editor_state = st.session_state["infra_table_editor"]
     has_changes = False
@@ -135,7 +143,6 @@ if "infra_table_editor" in st.session_state:
                 if "doc_id" in row_full: del row_full["doc_id"]
                 row_full["최종점검일"] = str(row_full.get("최종점검일", datetime.now().date()))
                 row_full["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-                # NaN 값을 빈 문자열로 치환하여 DB 저장 에러 방지
                 row_full = {k: ("" if pd.isna(v) else v) for k, v in row_full.items()}
                 db.collection("infra_management").add(row_full)
             else:
