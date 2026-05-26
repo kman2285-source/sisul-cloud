@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 # 페이지 기본 설정 (모바일 최적화 레이아웃)
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 3중 철벽 방패] 손가락 속도와 관계없이 keydown, keypress, keyup 모든 타이밍의 찌꺼기 C 입력을 암살합니다.
+# 🛡️ [단축키 무력화 3중 철벽 방패] 손가락 속도와 관계없이 찌꺼기 C 입력을 암살합니다.
 components.html(
     """
     <script>
@@ -20,17 +20,14 @@ components.html(
             
             if (e.ctrlKey || e.metaKey) return; // Ctrl을 누른 상태면 복사(Copy)이므로 정상 통과
             
-            // 그 외의 찰나에 입력된 단순 'C'는 3단계 이벤트 모두 즉시 암살
             e.stopImmediatePropagation();
             e.stopPropagation();
             e.preventDefault();
         }
     }
-    // 누를 때, 누르고 있을 때, 손을 뗄 때 3단계 모두 감시 (최상위 단계에서 차단)
     window.parent.document.addEventListener('keydown', blockCacheShortcut, true);
     window.parent.document.addEventListener('keypress', blockCacheShortcut, true);
     window.parent.document.addEventListener('keyup', blockCacheShortcut, true);
-    
     window.addEventListener('keydown', blockCacheShortcut, true);
     window.addEventListener('keypress', blockCacheShortcut, true);
     window.addEventListener('keyup', blockCacheShortcut, true);
@@ -198,15 +195,38 @@ with tab3:
             st.rerun()
 
 st.markdown("---")
-st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
-# [에러 해결] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
+# 🎯 [신규 기능] 실행 취소(Undo) UI 배치
+col_title, col_undo = st.columns([8, 2])
+with col_title:
+    st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
+    st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
+
+with col_undo:
+    # 취소할 수 있는 작업 기록이 있으면 되돌리기 버튼 활성화
+    if "undo_stack" in st.session_state and len(st.session_state.undo_stack) > 0:
+        if st.button("↩️ 직전 작업 취소 (Undo)", use_container_width=True, type="primary"):
+            with st.spinner("DB 복구 중..."):
+                last_actions = st.session_state.undo_stack.pop()
+                for action in last_actions:
+                    if action["type"] == "add":
+                        # 추가된 행은 지워버림
+                        db.collection("infra_management").document(action["doc_id"]).delete()
+                    elif action["type"] == "edit":
+                        # 수정된 행은 원래 데이터로 덮어씌움
+                        db.collection("infra_management").document(action["doc_id"]).update(action["data"])
+                    elif action["type"] == "delete":
+                        # 삭제된 행은 이전 데이터를 그대로 부활시킴
+                        db.collection("infra_management").document(action["doc_id"]).set(action["data"])
+                st.cache_data.clear()
+                st.rerun()
+
+# 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 스마트 서식 지정 로직 (유연한 엑셀 비율 모드)
+# 스마트 서식 지정 로직
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
@@ -243,16 +263,17 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 실시간 동기화 및 구글 지도 주소 변환 로직
+# 4. 실시간 동기화, 지도 주소 변환 및 🎯 역추적(Undo) 로그 저장 로직
 if "infra_table_editor" in st.session_state:
     editor_state = st.session_state["infra_table_editor"]
     has_changes = False
+    undo_actions = [] # 이번 턴에 일어난 모든 작업을 기록할 빈 바구니
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
             doc_id = df.iloc[int(row_idx)]["doc_id"]
+            old_data = df.iloc[int(row_idx)].to_dict()
             
-            # 날짜 및 구글 지도 링크 변환 처리
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
                     changes[k] = str(v)
@@ -270,9 +291,16 @@ if "infra_table_editor" in st.session_state:
                 for dc in date_cols:
                     if dc in row_full: row_full[dc] = str(row_full.get(dc, datetime.now().date()))
                 row_full = {k: ("" if pd.isna(v) else v) for k, v in row_full.items()}
-                db.collection("infra_management").add(row_full)
+                _, doc_ref = db.collection("infra_management").add(row_full)
+                undo_actions.append({"type": "add", "doc_id": doc_ref.id})
             else:
                 db.collection("infra_management").document(str(doc_id)).update(changes)
+                # 수정된 항목들의 '과거 데이터'만 뽑아서 Undo 바구니에 저장
+                undo_data = {}
+                for k in changes.keys():
+                    old_val = old_data.get(k, "")
+                    undo_data[k] = str(old_val) if isinstance(old_val, type(datetime.now().date())) else old_val
+                undo_actions.append({"type": "edit", "doc_id": str(doc_id), "data": undo_data})
         has_changes = True
                 
     if editor_state.get("added_rows"):
@@ -289,7 +317,9 @@ if "infra_table_editor" in st.session_state:
                         row_data[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
                         
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
-            db.collection("infra_management").add(row_data)
+            _, doc_ref = db.collection("infra_management").add(row_data)
+            # 새로 추가한 문서 ID를 기록 (나중에 Undo시 지워버리기 위함)
+            undo_actions.append({"type": "add", "doc_id": doc_ref.id})
         has_changes = True
             
     if editor_state.get("deleted_rows"):
@@ -308,12 +338,22 @@ if "infra_table_editor" in st.session_state:
                                 blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
                                 try: bucket.blob(blob_name).delete()
                                 except Exception: pass
+                        # 지워버리기 전에 전체 데이터를 통째로 복사해서 Undo 바구니에 저장 (부활용)
+                        undo_actions.append({"type": "delete", "doc_id": str(doc_id), "data": doc_data})
                     doc_ref.delete()
                 except Exception as e:
                     st.error(f"데이터 파기 실패: {e}")
         has_changes = True
                 
     if has_changes:
+        # 작업 내역을 메모리에 쌓아둠 (최대 10개까지만 기억하도록 제한)
+        if "undo_stack" not in st.session_state:
+            st.session_state.undo_stack = []
+        if len(undo_actions) > 0:
+            st.session_state.undo_stack.append(undo_actions)
+            if len(st.session_state.undo_stack) > 10:
+                st.session_state.undo_stack.pop(0)
+                
         st.cache_data.clear()
         st.rerun()
 
