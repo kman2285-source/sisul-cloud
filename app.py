@@ -42,7 +42,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 설정
+# 클라우드 DB에서 열 순서 불러오기
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -90,7 +90,7 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# ⚙️ 관리 메뉴 (3개의 탭 레이아웃)
+# ⚙️ 관리 메뉴
 st.subheader("⚙️ 표 기본 설정 관리")
 tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
@@ -141,10 +141,7 @@ with tab2:
                     st.rerun()
 
 with tab3:
-    # 🎯 [대개편 신규 기능] 모든 열의 순서를 미니 표 안에서 숫자로 더블클릭해 직접 수정한 뒤 한 번에 영구 반영하는 구조
     st.caption("💡 아래 표에서 각 항목의 **[출력 순서]** 숫자를 원하는 대로 변경(더블클릭 후 입력)한 뒤, 맨 아래 **[💾 순서 영구 조정 적용]** 버튼을 누르면 메인 표에 즉시 반영됩니다.")
-    
-    # 현재 설정된 순서대로 정렬용 미니 데이터프레임 생성
     order_data = pd.DataFrame({
         "항목(열) 이름": col_order,
         "출력 순서 (숫자가 작을수록 왼쪽 배치)": [i + 1 for i in range(len(col_order))]
@@ -163,10 +160,7 @@ with tab3:
     
     if st.button("💾 순서 영구 조정 적용", use_container_width=True, type="primary"):
         with st.spinner("클라우드 서버에 순서 고정 중..."):
-            # 사용자가 수정한 숫자를 기준으로 오름차순 정렬하여 새로운 순서 리스트 추출
             new_order = edited_order_df.sort_values("출력 순서 (숫자가 작을수록 왼쪽 배치)")["항목(열) 이름"].tolist()
-            
-            # 구글 클라우드 DB 세팅 문서 업데이트 및 캐시 초기화
             settings_ref.set({"column_order": new_order})
             st.success("🎉 열 순서 설정이 데이터베이스에 영구 반영되었습니다!")
             st.cache_data.clear()
@@ -176,15 +170,25 @@ st.markdown("---")
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
 st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
-# 동적 열 서식 지정
+# 🎯 [신규 기능] 스마트 열 너비 자동 조절 로직
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
+    # 기본 너비는 중간 사이즈(medium)
+    col_width = "medium"
+    
+    # 이름에 특정 단어가 들어가면 무조건 넓은 사이즈(large)로 고정 렌더링
+    if any(keyword in c for keyword in ["내용", "비고", "결과", "시설물명", "사진", "URL", "링크", "주소"]):
+        col_width = "large"
+        
     if "상태" in c:
-        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
+        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"], width="small") # 상태는 좁게
     elif "사진" in c or "URL" in c or "링크" in c:
-        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
+        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True, width=col_width)
     elif "일" in c or "날짜" in c:
-        dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
+        dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date(), width="medium") # 날짜는 중간
+    else:
+        # 일반 텍스트 열에도 스마트 너비 적용
+        dynamic_config[c] = st.column_config.TextColumn(c, width=col_width)
 
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
@@ -192,12 +196,12 @@ edited_df = st.data_editor(
     column_order=col_order,
     column_config=dynamic_config,
     num_rows="dynamic",
-    use_container_width=True,
+    use_container_width=True, # 화면 폭 꽉 채우기
     hide_index=True,
     key="infra_table_editor"
 )
 
-# 📥 엑셀 다운로드 (한글 깨짐 방지)
+# 📥 엑셀 다운로드 
 st.markdown(" ") 
 export_df = edited_df[col_order].copy()
 csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
