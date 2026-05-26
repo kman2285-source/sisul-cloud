@@ -9,23 +9,31 @@ import streamlit.components.v1 as components
 # 페이지 기본 설정 (모바일 최적화 레이아웃)
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 방패] Ctrl+C(복사)는 허용하고, 캐시 삭제(그냥 C)만 막습니다.
+# 🛡️ [단축키 무력화 3중 철벽 방패] 손가락 속도와 관계없이 keydown, keypress, keyup 모든 타이밍의 찌꺼기 C 입력을 암살합니다.
 components.html(
     """
     <script>
-    window.parent.document.addEventListener('keydown', function(e) {
-        const tag = window.parent.document.activeElement.tagName.toLowerCase();
-        if (tag === 'input' || tag === 'textarea') return; // 글자 입력 중일 땐 정상 작동
-        
+    function blockCacheShortcut(e) {
         if (e.key === 'c' || e.key === 'C') {
-            // Ctrl 키나 Mac의 Cmd 키를 같이 눌렀다면 복사하는 것이니 통과
-            if (e.ctrlKey || e.metaKey) return; 
+            const activeTag = window.parent.document.activeElement ? window.parent.document.activeElement.tagName.toLowerCase() : '';
+            if (activeTag === 'input' || activeTag === 'textarea') return; // 글자 타이핑 중일 땐 정상 작동
             
-            // Ctrl 없이 그냥 'C'만 눌렀을 때만 캐시 창 안 뜨게 막기
-            e.stopPropagation(); 
+            if (e.ctrlKey || e.metaKey) return; // Ctrl을 누른 상태면 복사(Copy)이므로 정상 통과
+            
+            // 그 외의 찰나에 입력된 단순 'C'는 3단계 이벤트 모두 즉시 암살
+            e.stopImmediatePropagation();
+            e.stopPropagation();
             e.preventDefault();
         }
-    }, true);
+    }
+    // 누를 때, 누르고 있을 때, 손을 뗄 때 3단계 모두 감시 (최상위 단계에서 차단)
+    window.parent.document.addEventListener('keydown', blockCacheShortcut, true);
+    window.parent.document.addEventListener('keypress', blockCacheShortcut, true);
+    window.parent.document.addEventListener('keyup', blockCacheShortcut, true);
+    
+    window.addEventListener('keydown', blockCacheShortcut, true);
+    window.addEventListener('keypress', blockCacheShortcut, true);
+    window.addEventListener('keyup', blockCacheShortcut, true);
     </script>
     """,
     height=0, width=0
@@ -193,12 +201,12 @@ st.markdown("---")
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
 st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
-# 🎯 [에러 해결] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
+# [에러 해결] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 스마트 서식 지정 로직 (열 너비 강제 고정 해제 - 유연한 비율 적용)
+# 스마트 서식 지정 로직 (유연한 엑셀 비율 모드)
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
@@ -221,7 +229,7 @@ edited_df = st.data_editor(
     key="infra_table_editor"
 )
 
-# 📥 엑셀 다운로드 
+# 📥 엑셀 다운로드
 st.markdown(" ") 
 export_df = edited_df[col_order].copy()
 csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
@@ -249,7 +257,6 @@ if "infra_table_editor" in st.session_state:
                 if isinstance(v, type(datetime.now().date())):
                     changes[k] = str(v)
                 
-                # '위치'나 '지도' 필드에 웹 주소가 아닌 일반 텍스트(좌표/주소)가 입력되면 구글 지도 주소로 자동 조립
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
                     if not (val_str.startswith("http://") or val_str.startswith("https://")):
@@ -275,7 +282,6 @@ if "infra_table_editor" in st.session_state:
             for dc in date_cols:
                 if dc in row_data: row_data[dc] = str(row_data.get(dc, datetime.now().date()))
             
-            # 새 행 추가 시에도 구글 지도 공식 자동 조립
             for k, v in list(row_data.items()):
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
@@ -344,7 +350,7 @@ if photo_col:
                                 st.warning("먼저 입력하신 후, 셀 바깥을 클릭하여 DB에 자동 등록된 상태에서 사진을 올려주세요.")
                             else:
                                 db.collection("infra_management").document(target_doc_id).update({photo_col: public_url})
-                                st.success(f"🎉 {target_facility}에 사진 등록 및 실 실시간 매핑 완료!")
+                                st.success(f"🎉 {target_facility}에 사진 등록 및 실시간 매핑 완료!")
                                 st.cache_data.clear()
                                 st.rerun()
                     except Exception as e:
