@@ -42,12 +42,12 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기
+# 클라우드 DB에서 열 순서 불러오기 설정
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
 if not settings_snap.exists:
-    initial_order = ["시설물명", "상태", "점검자", "최종점검일", "사진URL"]
+    initial_order = ["시설물명", "상태", "점검자", "최종점검일", "사진URL", "시설물 위치"]
     settings_ref.set({"column_order": initial_order})
     col_order = initial_order
 else:
@@ -64,7 +64,7 @@ def load_infra_data():
         data_list.append(d)
     
     if not data_list:
-        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00"}])
+        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00", "시설물 위치": ""}])
     
     df_temp = pd.DataFrame(data_list)
     if "등록일시" not in df_temp.columns:
@@ -90,7 +90,7 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# ⚙️ 관리 메뉴
+# ⚙️ 관리 메뉴 (3개의 탭 레이아웃)
 st.subheader("⚙️ 표 기본 설정 관리")
 tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
@@ -170,25 +170,22 @@ st.markdown("---")
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
 st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
-# 🎯 [신규 기능] 스마트 열 너비 자동 조절 로직
+# 🎯 [에러 해결 핵심 코드] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
+for c in col_order:
+    if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
+        df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
+
+# 스마트 서식 지정 로직
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
-    # 기본 너비는 중간 사이즈(medium)
-    col_width = "medium"
-    
-    # 이름에 특정 단어가 들어가면 무조건 넓은 사이즈(large)로 고정 렌더링
-    if any(keyword in c for keyword in ["내용", "비고", "결과", "시설물명", "사진", "URL", "링크", "주소"]):
-        col_width = "large"
-        
     if "상태" in c:
-        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"], width="small") # 상태는 좁게
+        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
     elif "사진" in c or "URL" in c or "링크" in c:
-        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True, width=col_width)
+        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
+    elif "위치" in c or "지도" in c:
+        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📍 지도 보기")
     elif "일" in c or "날짜" in c:
-        dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date(), width="medium") # 날짜는 중간
-    else:
-        # 일반 텍스트 열에도 스마트 너비 적용
-        dynamic_config[c] = st.column_config.TextColumn(c, width=col_width)
+        dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
 
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
@@ -196,7 +193,7 @@ edited_df = st.data_editor(
     column_order=col_order,
     column_config=dynamic_config,
     num_rows="dynamic",
-    use_container_width=True, # 화면 폭 꽉 채우기
+    use_container_width=True,
     hide_index=True,
     key="infra_table_editor"
 )
@@ -215,7 +212,7 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 실시간 동기화 로직
+# 4. 실시간 동기화 및 구글 지도 주소 변환 로직
 if "infra_table_editor" in st.session_state:
     editor_state = st.session_state["infra_table_editor"]
     has_changes = False
@@ -223,9 +220,16 @@ if "infra_table_editor" in st.session_state:
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
             doc_id = df.iloc[int(row_idx)]["doc_id"]
-            for k, v in changes.items():
+            
+            # 날짜 및 구글 지도 링크 변환 처리
+            for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
                     changes[k] = str(v)
+                
+                if ("위치" in k or "지도" in k) and v:
+                    val_str = str(v).strip()
+                    if not (val_str.startswith("http://") or val_str.startswith("https://")):
+                        changes[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
 
             if str(doc_id).startswith("sample"):
                 row_full = df.iloc[int(row_idx)].to_dict()
@@ -246,6 +250,13 @@ if "infra_table_editor" in st.session_state:
             row_data["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
             for dc in date_cols:
                 if dc in row_data: row_data[dc] = str(row_data.get(dc, datetime.now().date()))
+            
+            for k, v in list(row_data.items()):
+                if ("위치" in k or "지도" in k) and v:
+                    val_str = str(v).strip()
+                    if not (val_str.startswith("http://") or val_str.startswith("https://")):
+                        row_data[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
+                        
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             db.collection("infra_management").add(row_data)
         has_changes = True
