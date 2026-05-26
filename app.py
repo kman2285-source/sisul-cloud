@@ -42,7 +42,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 🎯 클라우드 DB에서 열 순서 불러오기 (흔들림 방지)
+# 클라우드 DB에서 열 순서 불러오기 (흔들림 방지)
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -173,7 +173,8 @@ st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
-        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"], required=True)
+        # 🎯 핵심 수정: required=True (필수 입력 옵션)를 삭제했습니다! 이제 빈칸이나 붙여넣기도 100% 허용됩니다.
+        dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
     elif "사진" in c or "URL" in c or "링크" in c:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
     elif "일" in c or "날짜" in c:
