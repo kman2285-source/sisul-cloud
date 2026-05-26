@@ -1,4 +1,4 @@
-import streamlit st
+import streamlit as st
 import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
@@ -233,7 +233,7 @@ for c in col_order:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📍 지도 보기")
     elif "일" in c or "날짜" in c:
         dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
-    # 🎯 핵심 변경: 사용자가 길게 작성할 만한 열(비고, 내용, 결과)만 콕 집어서 가로 폭을 넓게(large) 고정합니다.
+    # 핵심 변경: 사용자가 길게 작성할 만한 열(비고, 내용, 결과)만 콕 집어서 가로 폭을 넓게(large) 고정합니다.
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
@@ -243,7 +243,7 @@ edited_df = st.data_editor(
     column_order=col_order,
     column_config=dynamic_config,
     num_rows="dynamic",
-    use_container_width=True, # 🎯 화면 전체 너비 꽉 채우기로 원상복구!
+    use_container_width=True, 
     hide_index=True,
     key="infra_table_editor"
 )
