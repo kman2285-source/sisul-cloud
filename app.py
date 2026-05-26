@@ -196,31 +196,37 @@ with tab3:
 
 st.markdown("---")
 
-# 실행 취소(Undo) UI 배치
+# 🎯 [신규 기능] 실행 취소(Undo) UI 배치
 col_title, col_undo = st.columns([8, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
     st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
 
 with col_undo:
+    # 취소할 수 있는 작업 기록이 있으면 되돌리기 버튼 활성화
     if "undo_stack" in st.session_state and len(st.session_state.undo_stack) > 0:
         if st.button("↩️ 직전 작업 취소 (Undo)", use_container_width=True, type="primary"):
             with st.spinner("DB 복구 중..."):
                 last_actions = st.session_state.undo_stack.pop()
                 for action in last_actions:
                     if action["type"] == "add":
+                        # 추가된 행은 지워버림
                         db.collection("infra_management").document(action["doc_id"]).delete()
                     elif action["type"] == "edit":
+                        # 수정된 행은 원래 데이터로 덮어씌움
                         db.collection("infra_management").document(action["doc_id"]).update(action["data"])
                     elif action["type"] == "delete":
+                        # 삭제된 행은 이전 데이터를 그대로 부활시킴
                         db.collection("infra_management").document(action["doc_id"]).set(action["data"])
                 st.cache_data.clear()
                 st.rerun()
 
+# 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
+# 스마트 서식 지정 로직
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
@@ -238,7 +244,7 @@ edited_df = st.data_editor(
     column_order=col_order,
     column_config=dynamic_config,
     num_rows="dynamic",
-    use_container_width=False, # 🎯 핵심 변경: 화면 억지로 꽉 채우기 해제! (자연스럽게 넓어지고 스크롤바 무조건 생성)
+    use_container_width=True,
     hide_index=True,
     key="infra_table_editor"
 )
@@ -257,11 +263,11 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 실시간 동기화, 지도 주소 변환 및 역추적(Undo) 로그 저장 로직
+# 4. 실시간 동기화, 지도 주소 변환 및 🎯 역추적(Undo) 로그 저장 로직
 if "infra_table_editor" in st.session_state:
     editor_state = st.session_state["infra_table_editor"]
     has_changes = False
-    undo_actions = []
+    undo_actions = [] # 이번 턴에 일어난 모든 작업을 기록할 빈 바구니
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
@@ -289,6 +295,7 @@ if "infra_table_editor" in st.session_state:
                 undo_actions.append({"type": "add", "doc_id": doc_ref.id})
             else:
                 db.collection("infra_management").document(str(doc_id)).update(changes)
+                # 수정된 항목들의 '과거 데이터'만 뽑아서 Undo 바구니에 저장
                 undo_data = {}
                 for k in changes.keys():
                     old_val = old_data.get(k, "")
@@ -311,6 +318,7 @@ if "infra_table_editor" in st.session_state:
                         
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             _, doc_ref = db.collection("infra_management").add(row_data)
+            # 새로 추가한 문서 ID를 기록 (나중에 Undo시 지워버리기 위함)
             undo_actions.append({"type": "add", "doc_id": doc_ref.id})
         has_changes = True
             
@@ -330,6 +338,7 @@ if "infra_table_editor" in st.session_state:
                                 blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
                                 try: bucket.blob(blob_name).delete()
                                 except Exception: pass
+                        # 지워버리기 전에 전체 데이터를 통째로 복사해서 Undo 바구니에 저장 (부활용)
                         undo_actions.append({"type": "delete", "doc_id": str(doc_id), "data": doc_data})
                     doc_ref.delete()
                 except Exception as e:
@@ -337,6 +346,7 @@ if "infra_table_editor" in st.session_state:
         has_changes = True
                 
     if has_changes:
+        # 작업 내역을 메모리에 쌓아둠 (최대 10개까지만 기억하도록 제한)
         if "undo_stack" not in st.session_state:
             st.session_state.undo_stack = []
         if len(undo_actions) > 0:
