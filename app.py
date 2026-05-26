@@ -42,7 +42,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 (흔들림 방지)
+# 클라우드 DB에서 열 순서 불러오기 설정
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -90,7 +90,7 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# ⚙️ 관리 메뉴 (3개의 탭으로 깔끔하게 분리)
+# ⚙️ 관리 메뉴 (3개의 탭 레이아웃)
 st.subheader("⚙️ 표 기본 설정 관리")
 tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
@@ -141,29 +141,36 @@ with tab2:
                     st.rerun()
 
 with tab3:
-    st.caption("💡 화면에서 마우스로 끌어다 놓은 임시 순서 대신, 여기서 버튼으로 이동시켜 서버에 영구적으로 고정하세요.")
-    selected_col = st.selectbox("↔️ 자리를 이동할 항목(열) 선택", col_order)
-    col_btn1, col_btn2 = st.columns(2)
-    with col_btn1:
-        if st.button("⬅️ 왼쪽(앞)으로 이동", use_container_width=True):
-            idx = col_order.index(selected_col)
-            if idx > 0:
-                col_order[idx], col_order[idx-1] = col_order[idx-1], col_order[idx]
-                settings_ref.update({"column_order": col_order})
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.warning("이미 맨 앞에 있습니다.")
-    with col_btn2:
-        if st.button("➡️ 오른쪽(뒤)으로 이동", use_container_width=True):
-            idx = col_order.index(selected_col)
-            if idx < len(col_order) - 1:
-                col_order[idx], col_order[idx+1] = col_order[idx+1], col_order[idx]
-                settings_ref.update({"column_order": col_order})
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.warning("이미 맨 뒤에 있습니다.")
+    # 🎯 [대개편 신규 기능] 모든 열의 순서를 미니 표 안에서 숫자로 더블클릭해 직접 수정한 뒤 한 번에 영구 반영하는 구조
+    st.caption("💡 아래 표에서 각 항목의 **[출력 순서]** 숫자를 원하는 대로 변경(더블클릭 후 입력)한 뒤, 맨 아래 **[💾 순서 영구 조정 적용]** 버튼을 누르면 메인 표에 즉시 반영됩니다.")
+    
+    # 현재 설정된 순서대로 정렬용 미니 데이터프레임 생성
+    order_data = pd.DataFrame({
+        "항목(열) 이름": col_order,
+        "출력 순서 (숫자가 작을수록 왼쪽 배치)": [i + 1 for i in range(len(col_order))]
+    })
+    
+    edited_order_df = st.data_editor(
+        order_data,
+        column_config={
+            "항목(열) 이름": st.column_config.TextColumn("항목(열) 이름", disabled=True),
+            "출력 순서 (숫자가 작을수록 왼쪽 배치)": st.column_config.NumberColumn("출력 순서", min_value=1, max_value=len(col_order), step=1)
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="column_reorder_matrix"
+    )
+    
+    if st.button("💾 순서 영구 조정 적용", use_container_width=True, type="primary"):
+        with st.spinner("클라우드 서버에 순서 고정 중..."):
+            # 사용자가 수정한 숫자를 기준으로 오름차순 정렬하여 새로운 순서 리스트 추출
+            new_order = edited_order_df.sort_values("출력 순서 (숫자가 작을수록 왼쪽 배치)")["항목(열) 이름"].tolist()
+            
+            # 구글 클라우드 DB 세팅 문서 업데이트 및 캐시 초기화
+            settings_ref.set({"column_order": new_order})
+            st.success("🎉 열 순서 설정이 데이터베이스에 영구 반영되었습니다!")
+            st.cache_data.clear()
+            st.rerun()
 
 st.markdown("---")
 st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
@@ -173,7 +180,6 @@ st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
-        # 🎯 핵심 수정: required=True (필수 입력 옵션)를 삭제했습니다! 이제 빈칸이나 붙여넣기도 100% 허용됩니다.
         dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
     elif "사진" in c or "URL" in c or "링크" in c:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
