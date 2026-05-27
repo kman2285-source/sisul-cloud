@@ -6,10 +6,10 @@ import json
 from datetime import datetime
 import streamlit.components.v1 as components
 
-# 페이지 기본 설정 (모바일 최적화 레이아웃)
+# 페이지 기본 설정
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 방패] C키 팝업 방지
+# 🛡️ [단축키 방패] C키 팝업 창 방지
 components.html(
     """
     <script>
@@ -69,7 +69,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 설정
+# 클라우드 DB에서 열 순서 불러오기
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -195,45 +195,16 @@ with tab3:
 
 st.markdown("---")
 
-# 🎯 [핵심] 일괄 저장 버튼과 집중 모드 배치
-col_title, col_save, col_focus = st.columns([6, 2, 2])
+# 🎯 일괄 저장 레이아웃 (집중 모드 삭제)
+col_title, col_save = st.columns([8, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-    st.caption("💡 표를 마음껏 수정하시고, 오류가 났을 땐 **Ctrl+Z**를 누르세요. 작업이 끝나면 꼭 우측의 **[💾 일괄 저장]**을 누르셔야 서버에 반영됩니다.")
-
+    st.caption("💡 표를 다 작성하신 뒤, 반드시 우측의 **[💾 일괄 저장]**을 누르셔야 서버에 반영됩니다.")
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-    # 🎯 데이터 입력을 다 끝내고 누르는 진짜 저장 버튼!
     save_btn = st.button("💾 변경사항 서버에 일괄 저장", use_container_width=True, type="primary")
 
-with col_focus:
-    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-    focus_mode = st.toggle("🖥️ 엑셀 집중 모드 (ON)", value=False)
-
-if focus_mode:
-    st.markdown("""
-        <style>
-        .block-container {
-            padding-top: 1rem !important;
-            padding-bottom: 0rem !important;
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-            max-width: 100% !important;
-        }
-        header {display: none !important;}
-        footer {display: none !important;}
-        [data-testid="stSidebar"] {display: none !important;}
-        [data-testid="collapsedControl"] {display: none !important;}
-        
-        /* 표 컨테이너 높이 강제 고정 */
-        [data-testid="stDataFrame"], [data-testid="stDataFrame"] > div {
-            height: 85vh !important;
-            min-height: 85vh !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-# 링크 타입 열에 들어간 찌꺼기 텍스트("") 청소
+# 링크 찌꺼기 텍스트("") 청소
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
@@ -252,21 +223,16 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-editor_args = {
-    "data": df,
-    "column_order": col_order,
-    "column_config": dynamic_config,
-    "num_rows": "dynamic",
-    "use_container_width": True,
-    "hide_index": True,
-    "key": "infra_table_editor"
-}
-
-if focus_mode:
-    editor_args["height"] = 850
-
 # 3. 엑셀 형태 UI
-edited_df = st.data_editor(**editor_args)
+edited_df = st.data_editor(
+    df,
+    column_order=col_order,
+    column_config=dynamic_config,
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    key="infra_table_editor"
+)
 
 # 📥 엑셀 다운로드
 st.markdown(" ") 
@@ -282,7 +248,7 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 🎯 [수동 일괄 저장 로직] 버튼을 눌렀을 때만 DB 통신을 합니다!
+# 4. 수동 일괄 저장 로직
 if save_btn:
     editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
