@@ -196,8 +196,8 @@ with tab3:
 
 st.markdown("---")
 
-# 실행 취소(Undo) UI 배치
-col_title, col_undo = st.columns([8, 2])
+# 🎯 [핵심 추가] 엑셀 집중 모드 UI 배치 및 CSS 제어 로직
+col_title, col_undo, col_focus = st.columns([6, 2, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
     st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
@@ -217,12 +217,33 @@ with col_undo:
                 st.cache_data.clear()
                 st.rerun()
 
+with col_focus:
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) # 줄맞춤
+    focus_mode = st.toggle("🖥️ 엑셀 집중 모드 (ON)", value=False)
+
+if focus_mode:
+    # 스위치를 켜면 여백, 헤더, 메뉴, 사이드바를 모두 날려버리고 화면 100%를 표에 할당합니다.
+    st.markdown("""
+        <style>
+        .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 1rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            max-width: 100% !important;
+        }
+        header {visibility: hidden;}
+        [data-testid="stSidebar"] {display: none !important;}
+        [data-testid="collapsedControl"] {display: none !important;}
+        </style>
+    """, unsafe_allow_html=True)
+
 # [에러 해결] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 🎯 맞춤형 열 서식 지정 로직
+# 맞춤형 열 서식 지정 로직
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
@@ -233,7 +254,6 @@ for c in col_order:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📍 지도 보기")
     elif "일" in c or "날짜" in c:
         dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
-    # 핵심 변경: 사용자가 길게 작성할 만한 열(비고, 내용, 결과)만 콕 집어서 가로 폭을 넓게(large) 고정합니다.
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
