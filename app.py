@@ -9,7 +9,7 @@ import streamlit.components.v1 as components
 # 페이지 기본 설정 (모바일 최적화 레이아웃)
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 3중 철벽 방패] 손가락 속도와 관계없이 찌꺼기 C 입력을 암살합니다.
+# 🛡️ [단축키 무력화 3중 철벽 방패]
 components.html(
     """
     <script>
@@ -196,7 +196,7 @@ with tab3:
 
 st.markdown("---")
 
-# 🎯 [핵심 추가] 엑셀 집중 모드 UI 배치 및 CSS 제어 로직
+# 엑셀 집중 모드 UI 배치 및 CSS 제어 로직
 col_title, col_undo, col_focus = st.columns([6, 2, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
@@ -218,27 +218,28 @@ with col_undo:
                 st.rerun()
 
 with col_focus:
-    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True) # 줄맞춤
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     focus_mode = st.toggle("🖥️ 엑셀 집중 모드 (ON)", value=False)
 
+# 🎯 [핵심 추가] 집중 모드가 켜지면 상하좌우 모든 방해물을 날려버립니다.
 if focus_mode:
-    # 스위치를 켜면 여백, 헤더, 메뉴, 사이드바를 모두 날려버리고 화면 100%를 표에 할당합니다.
     st.markdown("""
         <style>
         .block-container {
-            padding-top: 2rem !important;
-            padding-bottom: 1rem !important;
+            padding-top: 1rem !important;
+            padding-bottom: 0rem !important;
             padding-left: 1rem !important;
             padding-right: 1rem !important;
             max-width: 100% !important;
         }
-        header {visibility: hidden;}
+        header {display: none !important;}
+        footer {display: none !important;}
         [data-testid="stSidebar"] {display: none !important;}
         [data-testid="collapsedControl"] {display: none !important;}
         </style>
     """, unsafe_allow_html=True)
 
-# [에러 해결] 링크 타입 열에 들어간 찌꺼기 텍스트("")를 완전한 빈칸(None)으로 싹 청소합니다.
+# 링크 타입 열에 들어간 찌꺼기 텍스트("") 청소
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
@@ -257,6 +258,9 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
+# 🎯 [핵심 추가] 집중 모드 시 엑셀 표의 세로(높이)를 강제로 850px로 쫙 늘려버립니다.
+editor_height = 850 if focus_mode else None
+
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
     df,
@@ -265,6 +269,7 @@ edited_df = st.data_editor(
     num_rows="dynamic",
     use_container_width=True, 
     hide_index=True,
+    height=editor_height, # <-- 추가된 부분
     key="infra_table_editor"
 )
 
