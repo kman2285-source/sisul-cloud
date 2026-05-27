@@ -195,14 +195,38 @@ with tab3:
 
 st.markdown("---")
 
-# 🎯 일괄 저장 레이아웃 (집중 모드 삭제)
-col_title, col_save = st.columns([8, 2])
+# 🎯 일괄 저장 버튼과 진짜 전체화면 스위치 레이아웃
+col_title, col_save, col_focus = st.columns([5, 3, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-    st.caption("💡 표를 다 작성하신 뒤, 반드시 우측의 **[💾 일괄 저장]**을 누르셔야 서버에 반영됩니다.")
+    st.caption("💡 표 안의 기본 확대(⛶) 대신 우측의 **[전체화면 스위치]**를 켜야 저장 버튼이 유지됩니다.")
+
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     save_btn = st.button("💾 변경사항 서버에 일괄 저장", use_container_width=True, type="primary")
+
+with col_focus:
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+    # 🎯 저장 버튼을 살려두는 커스텀 전체화면 기능 부활!
+    focus_mode = st.toggle("🖥️ 전체화면 (저장버튼 유지)", value=False)
+
+if focus_mode:
+    # 스위치를 켜면 쓸데없는 여백만 날리고 표를 850px(모니터 세로크기)로 강제 확장합니다.
+    st.markdown("""
+        <style>
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 0rem !important;
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            max-width: 100% !important;
+        }
+        header {display: none !important;}
+        footer {display: none !important;}
+        [data-testid="stSidebar"] {display: none !important;}
+        [data-testid="collapsedControl"] {display: none !important;}
+        </style>
+    """, unsafe_allow_html=True)
 
 # 링크 찌꺼기 텍스트("") 청소
 for c in col_order:
@@ -223,16 +247,23 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
+# 에러 방지용 보따리 포장 기법
+editor_args = {
+    "data": df,
+    "column_order": col_order,
+    "column_config": dynamic_config,
+    "num_rows": "dynamic",
+    "use_container_width": True,
+    "hide_index": True,
+    "key": "infra_table_editor"
+}
+
+# 스위치가 켜지면 표의 높이를 850 픽셀로 강제 확장!
+if focus_mode:
+    editor_args["height"] = 850
+
 # 3. 엑셀 형태 UI
-edited_df = st.data_editor(
-    df,
-    column_order=col_order,
-    column_config=dynamic_config,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key="infra_table_editor"
-)
+edited_df = st.data_editor(**editor_args)
 
 # 📥 엑셀 다운로드
 st.markdown(" ") 
