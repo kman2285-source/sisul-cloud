@@ -195,38 +195,14 @@ with tab3:
 
 st.markdown("---")
 
-# 🎯 일괄 저장 버튼과 진짜 전체화면 스위치 레이아웃
-col_title, col_save, col_focus = st.columns([5, 3, 2])
+# 🎯 일괄 저장 레이아웃
+col_title, col_save = st.columns([8, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-    st.caption("💡 표 안의 기본 확대(⛶) 대신 우측의 **[전체화면 스위치]**를 켜야 저장 버튼이 유지됩니다.")
-
+    st.caption("💡 표 안의 기본 확대(⛶) 모드를 쓰셔도 화면이 튕기지 않습니다. 작성이 끝나면 우측 상단의 **[💾 일괄 저장]**을 꼭 눌러주세요.")
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     save_btn = st.button("💾 변경사항 서버에 일괄 저장", use_container_width=True, type="primary")
-
-with col_focus:
-    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-    # 🎯 저장 버튼을 살려두는 커스텀 전체화면 기능 부활!
-    focus_mode = st.toggle("🖥️ 전체화면 (저장버튼 유지)", value=False)
-
-if focus_mode:
-    # 스위치를 켜면 쓸데없는 여백만 날리고 표를 850px(모니터 세로크기)로 강제 확장합니다.
-    st.markdown("""
-        <style>
-        .block-container {
-            padding-top: 1rem !important;
-            padding-bottom: 0rem !important;
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-            max-width: 100% !important;
-        }
-        header {display: none !important;}
-        footer {display: none !important;}
-        [data-testid="stSidebar"] {display: none !important;}
-        [data-testid="collapsedControl"] {display: none !important;}
-        </style>
-    """, unsafe_allow_html=True)
 
 # 링크 찌꺼기 텍스트("") 청소
 for c in col_order:
@@ -238,32 +214,29 @@ dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
         dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
-    elif "사진" in c or "URL" in c or "링크" in c:
-        dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📸 사진 보기", disabled=True)
+    elif any(keyword in c for keyword in ["사진", "URL", "링크"]):
+        dynamic_config[c] = st.column_config.ImageColumn(c, help="📸 현장 점검 사진 미리보기")
     elif "위치" in c or "지도" in c:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📍 지도 보기")
     elif "일" in c or "날짜" in c:
         dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
-    elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
+    # 🎯 핵심 변경: '내용'이 들어가는 열은 넓이를 중간(medium)으로 축소!
+    elif "내용" in c:
+        dynamic_config[c] = st.column_config.TextColumn(c, width="medium")
+    # 나머지 비고, 결과 등은 예전처럼 넓게(large) 유지
+    elif any(keyword in c for keyword in ["비고", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-# 에러 방지용 보따리 포장 기법
-editor_args = {
-    "data": df,
-    "column_order": col_order,
-    "column_config": dynamic_config,
-    "num_rows": "dynamic",
-    "use_container_width": True,
-    "hide_index": True,
-    "key": "infra_table_editor"
-}
-
-# 스위치가 켜지면 표의 높이를 850 픽셀로 강제 확장!
-if focus_mode:
-    editor_args["height"] = 850
-
 # 3. 엑셀 형태 UI
-edited_df = st.data_editor(**editor_args)
+edited_df = st.data_editor(
+    df,
+    column_order=col_order,
+    column_config=dynamic_config,
+    num_rows="dynamic",
+    use_container_width=True,
+    hide_index=True,
+    key="infra_table_editor"
+)
 
 # 📥 엑셀 다운로드
 st.markdown(" ") 
