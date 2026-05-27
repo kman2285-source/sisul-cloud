@@ -69,7 +69,7 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기 (하수관로 기본 서식으로 초기 세팅)
+# 클라우드 DB에서 열 순서 불러오기
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
@@ -85,9 +85,17 @@ else:
 def load_infra_data():
     docs = db.collection("infra_management").stream()
     data_list = []
+    
     for doc in docs:
         d = doc.to_dict()
         d["doc_id"] = doc.id
+        
+        # 🎯 [중요] 만약 사진 열에 리스트(여러 장)가 들어있다면, 
+        # 표(ImageColumn)가 깨지지 않도록 첫 번째 사진 주소만 꺼내서 텍스트로 전달합니다.
+        for k, v in d.items():
+            if isinstance(v, list):
+                d[k] = v[0] if len(v) > 0 else None
+                
         data_list.append(d)
     
     if not data_list:
@@ -121,24 +129,39 @@ for dc in date_cols:
 df.insert(0, "NO", range(1, len(df) + 1))
 display_order = ["NO"] + col_order 
 
-# 🎯 [핵심 변경 복구] 거대했던 설정 메뉴를 '접이식 버튼(Expander)' 안으로 숨겼습니다!
-with st.expander("⚙️ 고급 설정: 표 항목(열) 추가 / 이름 변경 / 순서 고정 (클릭하여 펼치기)", expanded=False):
-    tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
+# 고급 설정 메뉴 (접이식)
+with st.expander("⚙️ 고급 설정: 표 항목(열) 추가 및 삽입 / 이름 변경 / 순서 고정", expanded=False):
+    tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 삽입 및 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
     with tab1:
         with st.form("add_column_form", clear_on_submit=True):
-            new_col_name = st.text_input("새 항목 이름", placeholder="예: 점검 내용")
-            if st.form_submit_button("➕ 항목 추가") and new_col_name:
+            new_col_name = st.text_input("새 항목 이름", placeholder="예: 관로 상태")
+            
+            # 🎯 [핵심 변경] 엑셀처럼 원하는 위치에 열을 삽입할 수 있도록 선택창 추가
+            position_options = ["맨 뒤에 추가", "맨 앞에 삽입"] + [f"'{c}' 열 앞에 삽입" for c in col_order]
+            insert_pos = st.selectbox("삽입할 위치 지정", position_options)
+            
+            if st.form_submit_button("➕ 항목 삽입/추가") and new_col_name:
                 new_col_name = new_col_name.strip()
-                if new_col_name in df.columns: 
-                    st.warning("이미 존재합니다.")
-                elif new_col_name in ["doc_id", "등록일시", "NO"]: 
+                if new_col_name in df.columns or new_col_name == "NO": 
+                    st.warning("이미 표에 존재하는 항목 이름입니다.")
+                elif new_col_name in ["doc_id", "등록일시"]: 
                     st.error("시스템 예약어는 사용할 수 없습니다.")
                 else:
-                    with st.spinner("항목 추가 중..."):
+                    with st.spinner("항목 삽입 중..."):
                         docs = db.collection("infra_management").stream()
                         for doc in docs: doc.reference.update({new_col_name: ""})
-                        col_order.append(new_col_name)
+                        
+                        # 🎯 선택한 위치에 정확하게 열 삽입 로직 실행
+                        if insert_pos == "맨 뒤에 추가":
+                            col_order.append(new_col_name)
+                        elif insert_pos == "맨 앞에 삽입":
+                            col_order.insert(0, new_col_name)
+                        else:
+                            target_col = insert_pos.split("'")[1]
+                            target_idx = col_order.index(target_col)
+                            col_order.insert(target_idx, new_col_name)
+                        
                         settings_ref.update({"column_order": col_order})
                         st.cache_data.clear()
                         st.rerun()
@@ -199,7 +222,7 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 추가 / 이름 변경 /
 
 st.markdown("---")
 
-# 🎯 그리드 상단 레이아웃 및 안내문구
+# 그리드 상단 레이아웃 및 안내문구
 col_title, col_save = st.columns([7, 3])
 with col_title:
     st.subheader("📊 하수관로 시설물 점검이력대장 (엑셀 형태)")
@@ -268,6 +291,10 @@ if save_btn:
             doc_id = df.iloc[int(row_idx)]["doc_id"]
             if "NO" in changes: del changes["NO"]
             
+            # 🎯 만약 표에서 사진 셀을 싹 비웠다면 전체 이미지 리스트 초기화 요청으로 인지
+            if photo_col in changes and (changes[photo_col] is None or str(changes[photo_col]).strip() == ""):
+                changes[photo_col] = []
+            
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
                     changes[k] = str(v)
@@ -288,6 +315,7 @@ if save_btn:
                 row_full = {k: ("" if pd.isna(v) else v) for k, v in row_full.items()}
                 db.collection("infra_management").add(row_full)
             else:
+                # 사진 열(배열 타입)을 직접 수동 편집하지 않았다면 다른 텍스트 필드만 안전하게 업데이트
                 db.collection("infra_management").document(str(doc_id)).update(changes)
         has_changes = True
                 
@@ -322,7 +350,14 @@ if save_btn:
                         photo_col_name = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
                         if photo_col_name:
                             photo_url = doc_data.get(photo_col_name, "")
-                            if photo_url and "sisul-2026.firebasestorage.app/" in photo_url:
+                            # 리스트 혹은 단일 스트링 형태 대응 삭제
+                            if isinstance(photo_url, list):
+                                for url in photo_url:
+                                    if "sisul-2026.firebasestorage.app/" in url:
+                                        blob_name = url.split("sisul-2026.firebasestorage.app/")[-1]
+                                        try: bucket.blob(blob_name).delete()
+                                        except Exception: pass
+                            elif photo_url and "sisul-2026.firebasestorage.app/" in photo_url:
                                 blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
                                 try: bucket.blob(blob_name).delete()
                                 except Exception: pass
@@ -340,7 +375,7 @@ if save_btn:
 
 st.markdown("---")
 
-# 5. 모바일 현장 사진 업로드
+# 5. 모바일 현장 사진 업로드 (다중 이미지 및 갤러리 관리 기능)
 st.subheader("📸 모바일 현장 점검 사진 등록")
 
 photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
@@ -356,7 +391,6 @@ if photo_col:
         name_col = other_cols[0] if other_cols else col_order[0]
     
     facility_options = {}
-    
     for idx, row in edited_df.iterrows():
         if pd.isna(row['doc_id']) or str(row['doc_id']) == "nan":
             continue
@@ -372,25 +406,58 @@ if photo_col:
         selected_label = st.selectbox("사진을 매핑할 시설물을 선택하세요:", list(facility_options.keys()))
         target_doc_id = facility_options[selected_label]
         
-        uploaded_file = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진을 선택하세요.", type=["jpg", "jpeg", "png"])
+        # 🎯 [변경 핵심 1] accept_multiple_files=True 옵션으로 다중 이미지 업로드 허용
+        uploaded_files = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진들을 선택하세요. (여러 장 동시 선택 가능)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
         
-        if uploaded_file is not None:
-            if st.button("🚀 선택한 항목에 사진 등록", type="secondary"):
-                with st.spinner("이미지 전송 중..."):
+        # 🎯 [변경 핵심 2] 현재 선택된 시설물에 누적 등록된 전체 사진 목록 가져오기 및 갤러리 출력
+        target_doc_ref = db.collection("infra_management").document(target_doc_id)
+        doc_snap = target_doc_ref.get()
+        
+        existing_photos = []
+        if doc_snap.exists:
+            img_data = doc_snap.to_dict().get(photo_col, [])
+            if isinstance(img_data, list):
+                existing_photos = img_data
+            elif isinstance(img_data, str) and img_data.strip():
+                existing_photos = [img_data]
+
+        # 누적된 사진이 있다면 예쁘게 5열 바둑판 모양 갤러리로 정렬해 출력
+        if existing_photos:
+            st.write(f"📊 현재 이 항목에 등록된 누적 사진: 총 {len(existing_photos)}장 (첫 번째 사진이 표에 대표로 표시됩니다)")
+            img_cols = st.columns(min(len(existing_photos), 5))
+            for i, img_url in enumerate(existing_photos):
+                with img_cols[i % 5]:
+                    st.image(img_url, caption=f"사진 #{i+1}", use_container_width=True)
+            
+            if st.button("🗑️ 이 항목의 기존 사진 모두 삭제(초기화)", type="secondary"):
+                with st.spinner("사진 링크 제거 중..."):
+                    target_doc_ref.update({photo_col: []})
+                    st.success("기존 사진 데이터가 완전히 초기화되었습니다.")
+                    st.cache_data.clear()
+                    st.rerun()
+                    
+        if uploaded_files:
+            if st.button("🚀 선택한 모든 사진 추가 등록", type="primary"):
+                with st.spinner("모든 이미지 서버 전송 중..."):
                     try:
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        file_name = f"infra_photos/{target_doc_id}_{timestamp}.png"
-                        
-                        blob = bucket.blob(file_name)
-                        blob.upload_from_string(uploaded_file.read(), content_type="image/png")
-                        blob.make_public()
-                        public_url = blob.public_url
+                        new_urls = []
+                        for idx, uploaded_file in enumerate(uploaded_files):
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            # 중복 파일 방지를 위해 파일 개수 인덱스(idx) 적용
+                            file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.png"
+                            
+                            blob = bucket.bucket().blob(file_name)
+                            blob.upload_from_string(uploaded_file.read(), content_type="image/png")
+                            blob.make_public()
+                            new_urls.append(blob.public_url)
                         
                         if target_doc_id.startswith("sample"):
                             st.warning("먼저 표에 내용을 입력하시고 [일괄 저장]을 누르신 후에 사진을 올려주세요.")
                         else:
-                            db.collection("infra_management").document(target_doc_id).update({photo_col: public_url})
-                            st.success("🎉 사진 등록 및 실시간 매핑 완료!")
+                            # 🎯 기존 리스트를 보존한 채 새 리스트를 더해줍니다 (무한 누적 가능)
+                            updated_photos = existing_photos + new_urls
+                            target_doc_ref.update({photo_col: updated_photos})
+                            st.success(f"🎉 성공적으로 {len(new_urls)}장의 사진이 대장에 추가 통합되었습니다!")
                             st.cache_data.clear()
                             st.rerun()
                     except Exception as e:
