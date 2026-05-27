@@ -9,16 +9,16 @@ import streamlit.components.v1 as components
 # 페이지 기본 설정 (모바일 최적화 레이아웃)
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 3중 철벽 방패]
+# 🛡️ [단축키 무력화 방패 & 스크롤 위치 고정 닻]
 components.html(
     """
     <script>
+    // 1. 단축키 방어 로직 (C키 팝업 방지)
     function blockCacheShortcut(e) {
         if (e.key === 'c' || e.key === 'C') {
             const activeTag = window.parent.document.activeElement ? window.parent.document.activeElement.tagName.toLowerCase() : '';
-            if (activeTag === 'input' || activeTag === 'textarea') return; // 글자 타이핑 중일 땐 정상 작동
-            
-            if (e.ctrlKey || e.metaKey) return; // Ctrl을 누른 상태면 복사(Copy)이므로 정상 통과
+            if (activeTag === 'input' || activeTag === 'textarea') return; 
+            if (e.ctrlKey || e.metaKey) return; 
             
             e.stopImmediatePropagation();
             e.stopPropagation();
@@ -31,6 +31,35 @@ components.html(
     window.addEventListener('keydown', blockCacheShortcut, true);
     window.addEventListener('keypress', blockCacheShortcut, true);
     window.addEventListener('keyup', blockCacheShortcut, true);
+
+    // 2. 🎯 [핵심 추가] 새로고침 시 스크롤 위치 튕김 방지 (메모리 닻)
+    const parentWin = window.parent;
+    const parentDoc = parentWin.document;
+    
+    function getScrollable() {
+        // Streamlit의 메인 스크롤 영역 찾기
+        return parentDoc.querySelector('.main') || parentDoc.scrollingElement || parentWin;
+    }
+
+    // 마우스를 굴릴 때마다 현재 위치를 브라우저 임시 메모리에 실시간 저장
+    parentWin.addEventListener('scroll', function() {
+        const scrollable = getScrollable();
+        const pos = scrollable.scrollTop || parentWin.scrollY || 0;
+        sessionStorage.setItem('st_scroll_pos', pos);
+    }, true);
+
+    // 화면이 새로고침(Rerun)되어 다시 렌더링될 때, 0.1초 만에 아까 위치로 끌어내림
+    setTimeout(function() {
+        const savedPos = sessionStorage.getItem('st_scroll_pos');
+        if (savedPos) {
+            const scrollable = getScrollable();
+            if (scrollable.scrollTo) {
+                scrollable.scrollTo(0, parseInt(savedPos));
+            } else {
+                scrollable.scrollTop = parseInt(savedPos);
+            }
+        }
+    }, 100); 
     </script>
     """,
     height=0, width=0
@@ -257,7 +286,7 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-# 🎯 [에러 해결 핵심] 보따리(Dictionary) 포장 기법으로 안전하게 파라미터 전달
+# 보따리(Dictionary) 포장 기법으로 안전하게 파라미터 전달
 editor_args = {
     "data": df,
     "column_order": col_order,
@@ -272,7 +301,7 @@ editor_args = {
 if focus_mode:
     editor_args["height"] = 850
 
-# 3. 엑셀 형태 UI (보따리 채로 전달)
+# 3. 엑셀 형태 UI
 edited_df = st.data_editor(**editor_args)
 
 # 📥 엑셀 다운로드
