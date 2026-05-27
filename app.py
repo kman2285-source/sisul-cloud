@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 import streamlit.components.v1 as components
 
-# 🏢 페이지 기본 설정 (대구공공시설관리공단 시설관리팀 운영 웹으로 명칭 변경)
+# 🏢 페이지 기본 설정
 st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
 
 # 🛡️ [단축키 방패] C키 팝업 창 방지
@@ -49,7 +49,6 @@ if not firebase_admin._apps:
 db = firestore.client()
 bucket = storage.bucket()
 
-# 🏢 메인 타이틀 변경
 st.title("📱 대구공공시설관리공단 시설관리팀 운영 웹")
 st.markdown("---")
 
@@ -75,7 +74,6 @@ settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
 if not settings_snap.exists:
-    # 대리님의 하수관로 이력대장 맞춤형 초기 열 순서 세팅
     initial_order = ["점검일", "사업처", "하천,지역", "시설물 종류", "시설명", "시설물 위치", "점검유형", "점검자", "점검내용", "점검결과", "현장 사진", "상태", "비고"]
     settings_ref.set({"column_order": initial_order})
     col_order = initial_order
@@ -123,85 +121,85 @@ for dc in date_cols:
 df.insert(0, "NO", range(1, len(df) + 1))
 display_order = ["NO"] + col_order 
 
-# ⚙️ 관리 메뉴 
-st.subheader("⚙️ 표 기본 설정 관리")
-tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
+# 🎯 [핵심 변경 복구] 거대했던 설정 메뉴를 '접이식 버튼(Expander)' 안으로 숨겼습니다!
+with st.expander("⚙️ 고급 설정: 표 항목(열) 추가 / 이름 변경 / 순서 고정 (클릭하여 펼치기)", expanded=False):
+    tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
-with tab1:
-    with st.form("add_column_form", clear_on_submit=True):
-        new_col_name = st.text_input("새 항목 이름", placeholder="예: 점검 내용")
-        if st.form_submit_button("➕ 항목 추가") and new_col_name:
-            new_col_name = new_col_name.strip()
-            if new_col_name in df.columns: 
-                st.warning("이미 존재합니다.")
-            elif new_col_name in ["doc_id", "등록일시", "NO"]: 
-                st.error("시스템 예약어는 사용할 수 없습니다.")
-            else:
-                with st.spinner("항목 추가 중..."):
-                    docs = db.collection("infra_management").stream()
-                    for doc in docs: doc.reference.update({new_col_name: ""})
-                    col_order.append(new_col_name)
-                    settings_ref.update({"column_order": col_order})
-                    st.cache_data.clear()
-                    st.rerun()
+    with tab1:
+        with st.form("add_column_form", clear_on_submit=True):
+            new_col_name = st.text_input("새 항목 이름", placeholder="예: 점검 내용")
+            if st.form_submit_button("➕ 항목 추가") and new_col_name:
+                new_col_name = new_col_name.strip()
+                if new_col_name in df.columns: 
+                    st.warning("이미 존재합니다.")
+                elif new_col_name in ["doc_id", "등록일시", "NO"]: 
+                    st.error("시스템 예약어는 사용할 수 없습니다.")
+                else:
+                    with st.spinner("항목 추가 중..."):
+                        docs = db.collection("infra_management").stream()
+                        for doc in docs: doc.reference.update({new_col_name: ""})
+                        col_order.append(new_col_name)
+                        settings_ref.update({"column_order": col_order})
+                        st.cache_data.clear()
+                        st.rerun()
 
-with tab2:
-    with st.form("rename_column_form", clear_on_submit=True):
-        st.caption("기존 항목의 이름을 서버 전체에서 안전하게 바꿉니다.")
-        old_name = st.selectbox("변경할 기존 항목 선택", col_order)
-        new_name = st.text_input("새로운 항목 이름", placeholder="예: 점검결과")
-        if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
-            new_name = new_name.strip()
-            if new_name in df.columns: 
-                st.warning("이미 표에 존재하는 이름입니다.")
-            elif new_name in ["doc_id", "등록일시", "NO"]: 
-                st.error("시스템 예약어는 사용할 수 없습니다.")
-            else:
-                with st.spinner("데이터 이전 및 이름 변경 중..."):
-                    docs = db.collection("infra_management").stream()
-                    for doc in docs:
-                        d_dict = doc.to_dict()
-                        if old_name in d_dict:
-                            doc.reference.update({
-                                new_name: d_dict[old_name],
-                                old_name: firestore.DELETE_FIELD
-                            })
-                    idx = col_order.index(old_name)
-                    col_order[idx] = new_name
-                    settings_ref.update({"column_order": col_order})
-                    st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
-                    st.cache_data.clear()
-                    st.rerun()
+    with tab2:
+        with st.form("rename_column_form", clear_on_submit=True):
+            st.caption("기존 항목의 이름을 서버 전체에서 안전하게 바꿉니다.")
+            old_name = st.selectbox("변경할 기존 항목 선택", col_order)
+            new_name = st.text_input("새로운 항목 이름", placeholder="예: 점검결과")
+            if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
+                new_name = new_name.strip()
+                if new_name in df.columns: 
+                    st.warning("이미 표에 존재하는 이름입니다.")
+                elif new_name in ["doc_id", "등록일시", "NO"]: 
+                    st.error("시스템 예약어는 사용할 수 없습니다.")
+                else:
+                    with st.spinner("데이터 이전 및 이름 변경 중..."):
+                        docs = db.collection("infra_management").stream()
+                        for doc in docs:
+                            d_dict = doc.to_dict()
+                            if old_name in d_dict:
+                                doc.reference.update({
+                                    new_name: d_dict[old_name],
+                                    old_name: firestore.DELETE_FIELD
+                                })
+                        idx = col_order.index(old_name)
+                        col_order[idx] = new_name
+                        settings_ref.update({"column_order": col_order})
+                        st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
+                        st.cache_data.clear()
+                        st.rerun()
 
-with tab3:
-    st.caption("💡 아래 표에서 각 항목의 **[출력 순서]** 숫자를 원하는 대로 변경(더블클릭 후 입력)한 뒤, 맨 아래 **[💾 순서 영구 조정 적용]** 버튼을 누르면 메인 표에 즉시 반영됩니다.")
-    order_data = pd.DataFrame({
-        "항목(열) 이름": col_order,
-        "출력 순서 (숫자가 작을수록 왼쪽 배치)": [i + 1 for i in range(len(col_order))]
-    })
-    
-    edited_order_df = st.data_editor(
-        order_data,
-        column_config={
-            "항목(열) 이름": st.column_config.TextColumn("항목(열) 이름", disabled=True),
-            "출력 순서 (숫자가 작을수록 왼쪽 배치)": st.column_config.NumberColumn("출력 순서", min_value=1, max_value=len(col_order), step=1)
-        },
-        hide_index=True,
-        use_container_width=True,
-        key="column_reorder_matrix"
-    )
-    
-    if st.button("💾 순서 영구 조정 적용", use_container_width=True, type="primary"):
-        with st.spinner("클라우드 서버에 순서 고정 중..."):
-            new_order = edited_order_df.sort_values("출력 순서 (숫자가 작을수록 왼쪽 배치)")["항목(열) 이름"].tolist()
-            settings_ref.set({"column_order": new_order})
-            st.success("🎉 열 순서 설정이 데이터베이스에 영구 반영되었습니다!")
-            st.cache_data.clear()
-            st.rerun()
+    with tab3:
+        st.caption("💡 아래 표에서 각 항목의 **[출력 순서]** 숫자를 원하는 대로 변경(더블클릭 후 입력)한 뒤, 맨 아래 **[💾 순서 영구 조정 적용]** 버튼을 누르면 메인 표에 즉시 반영됩니다.")
+        order_data = pd.DataFrame({
+            "항목(열) 이름": col_order,
+            "출력 순서 (숫자가 작을수록 왼쪽 배치)": [i + 1 for i in range(len(col_order))]
+        })
+        
+        edited_order_df = st.data_editor(
+            order_data,
+            column_config={
+                "항목(열) 이름": st.column_config.TextColumn("항목(열) 이름", disabled=True),
+                "출력 순서 (숫자가 작을수록 왼쪽 배치)": st.column_config.NumberColumn("출력 순서", min_value=1, max_value=len(col_order), step=1)
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="column_reorder_matrix"
+        )
+        
+        if st.button("💾 순서 영구 조정 적용", use_container_width=True, type="primary"):
+            with st.spinner("클라우드 서버에 순서 고정 중..."):
+                new_order = edited_order_df.sort_values("출력 순서 (숫자가 작을수록 왼쪽 배치)")["항목(열) 이름"].tolist()
+                settings_ref.set({"column_order": new_order})
+                st.success("🎉 열 순서 설정이 데이터베이스에 영구 반영되었습니다!")
+                st.cache_data.clear()
+                st.rerun()
 
 st.markdown("---")
 
-# 🎯 그리드 상단 레이아웃 및 안내문구 (하수관로 시설물 점검이력대장으로 명칭 변경)
+# 🎯 그리드 상단 레이아웃 및 안내문구
 col_title, col_save = st.columns([7, 3])
 with col_title:
     st.subheader("📊 하수관로 시설물 점검이력대장 (엑셀 형태)")
