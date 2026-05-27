@@ -221,7 +221,6 @@ with col_focus:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     focus_mode = st.toggle("🖥️ 엑셀 집중 모드 (ON)", value=False)
 
-# 🎯 [핵심 추가] 집중 모드가 켜지면 상하좌우 모든 방해물을 날려버립니다.
 if focus_mode:
     st.markdown("""
         <style>
@@ -258,20 +257,23 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-# 🎯 [핵심 추가] 집중 모드 시 엑셀 표의 세로(높이)를 강제로 850px로 쫙 늘려버립니다.
-editor_height = 850 if focus_mode else None
+# 🎯 [에러 해결 핵심] 보따리(Dictionary) 포장 기법으로 안전하게 파라미터 전달
+editor_args = {
+    "data": df,
+    "column_order": col_order,
+    "column_config": dynamic_config,
+    "num_rows": "dynamic",
+    "use_container_width": True,
+    "hide_index": True,
+    "key": "infra_table_editor"
+}
 
-# 3. 엑셀 형태 UI
-edited_df = st.data_editor(
-    df,
-    column_order=col_order,
-    column_config=dynamic_config,
-    num_rows="dynamic",
-    use_container_width=True, 
-    hide_index=True,
-    height=editor_height, # <-- 추가된 부분
-    key="infra_table_editor"
-)
+# 집중 모드가 켜졌을 때만 보따리에 높이(height) 옵션을 몰래 슬쩍 추가합니다.
+if focus_mode:
+    editor_args["height"] = 850
+
+# 3. 엑셀 형태 UI (보따리 채로 전달)
+edited_df = st.data_editor(**editor_args)
 
 # 📥 엑셀 다운로드
 st.markdown(" ") 
