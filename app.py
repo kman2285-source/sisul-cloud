@@ -117,6 +117,9 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
+# 🎯 [핵심] 표 맨 앞의 넘버링(NO)을 위해 인덱스를 1부터 꽉 채워줍니다.
+df.index = range(1, len(df) + 1)
+
 # ⚙️ 관리 메뉴 (3개의 탭 레이아웃)
 st.subheader("⚙️ 표 기본 설정 관리")
 tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
@@ -128,7 +131,7 @@ with tab1:
             new_col_name = new_col_name.strip()
             if new_col_name in df.columns: 
                 st.warning("이미 존재합니다.")
-            elif new_col_name in ["doc_id", "등록일시"]: 
+            elif new_col_name in ["doc_id", "등록일시", "NO"]: 
                 st.error("시스템 예약어는 사용할 수 없습니다.")
             else:
                 with st.spinner("항목 추가 중..."):
@@ -148,7 +151,7 @@ with tab2:
             new_name = new_name.strip()
             if new_name in df.columns: 
                 st.warning("이미 표에 존재하는 이름입니다.")
-            elif new_name in ["doc_id", "등록일시"]: 
+            elif new_name in ["doc_id", "등록일시", "NO"]: 
                 st.error("시스템 예약어는 사용할 수 없습니다.")
             else:
                 with st.spinner("데이터 이전 및 이름 변경 중..."):
@@ -195,7 +198,7 @@ with tab3:
 
 st.markdown("---")
 
-# 🎯 일괄 저장 레이아웃
+# 수동 일괄 저장 레이아웃
 col_title, col_save = st.columns([8, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
@@ -209,8 +212,14 @@ for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 맞춤형 열 서식 지정
-dynamic_config = {"doc_id": None, "등록일시": None}
+# 🎯 맞춤형 열 서식 지정
+dynamic_config = {
+    "doc_id": None, 
+    "등록일시": None,
+    # 숨어있던 인덱스를 'NO'라는 이름의 읽기 전용 숫자 열로 둔갑시킵니다.
+    "_index": st.column_config.NumberColumn("NO", disabled=True, format="%d")
+}
+
 for c in col_order:
     if "상태" in c:
         dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
@@ -220,10 +229,8 @@ for c in col_order:
         dynamic_config[c] = st.column_config.LinkColumn(c, display_text="📍 지도 보기")
     elif "일" in c or "날짜" in c:
         dynamic_config[c] = st.column_config.DateColumn(c, default=datetime.now().date())
-    # 🎯 핵심 변경: '내용'이 들어가는 열은 넓이를 중간(medium)으로 축소!
     elif "내용" in c:
         dynamic_config[c] = st.column_config.TextColumn(c, width="medium")
-    # 나머지 비고, 결과 등은 예전처럼 넓게(large) 유지
     elif any(keyword in c for keyword in ["비고", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
@@ -234,13 +241,14 @@ edited_df = st.data_editor(
     column_config=dynamic_config,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True,
+    hide_index=False, # 🎯 숨겨뒀던 인덱스 열(NO)을 화면에 표시합니다.
     key="infra_table_editor"
 )
 
-# 📥 엑셀 다운로드
+# 📥 엑셀 다운로드 (NO 열 포함)
 st.markdown(" ") 
 export_df = edited_df[col_order].copy()
+export_df.insert(0, "NO", edited_df.index) # 엑셀 파일 맨 앞에도 NO 열을 예쁘게 끼워 넣습니다.
 csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
 
 st.download_button(
@@ -252,14 +260,15 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 수동 일괄 저장 로직
+# 4. 수동 일괄 저장 로직 (인덱스 변경에 따른 안전한 데이터 추적)
 if save_btn:
     editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
-            doc_id = df.iloc[int(row_idx)]["doc_id"]
+            # 🎯 바뀐 인덱스 번호에 맞춰 정확한 행을 찾아냅니다.
+            doc_id = df.loc[int(row_idx)]["doc_id"]
             
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
@@ -271,7 +280,7 @@ if save_btn:
                         changes[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
 
             if str(doc_id).startswith("sample"):
-                row_full = df.iloc[int(row_idx)].to_dict()
+                row_full = df.loc[int(row_idx)].to_dict()
                 row_full.update(changes)
                 if "doc_id" in row_full: del row_full["doc_id"]
                 row_full["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -302,7 +311,8 @@ if save_btn:
             
     if editor_state.get("deleted_rows"):
         for row_idx in editor_state["deleted_rows"]:
-            doc_id = df.iloc[int(row_idx)]["doc_id"]
+            # 🎯 삭제 시에도 정확한 행을 추적합니다.
+            doc_id = df.loc[int(row_idx)]["doc_id"]
             if not str(doc_id).startswith("sample"):
                 try:
                     doc_ref = db.collection("infra_management").document(str(doc_id))
