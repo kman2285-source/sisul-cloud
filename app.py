@@ -117,9 +117,9 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# NO(가짜 인덱스) 세팅
+# 🎯 [핵심 버그 수정] 컴퓨터 내부 인덱스는 건드리지 않고, 맨 앞에 가짜 'NO' 열을 물리적으로 끼워 넣습니다.
 df.insert(0, "NO", range(1, len(df) + 1))
-display_order = ["NO"] + col_order 
+display_order = ["NO"] + col_order # 화면에 보여줄 순서 정의
 
 # ⚙️ 관리 메뉴 
 st.subheader("⚙️ 표 기본 설정 관리")
@@ -216,7 +216,7 @@ for c in col_order:
 dynamic_config = {
     "doc_id": None, 
     "등록일시": None,
-    "NO": st.column_config.NumberColumn("NO", disabled=True) 
+    "NO": st.column_config.NumberColumn("NO", disabled=True) # 수정 불가하게 잠금
 }
 
 for c in col_order:
@@ -236,11 +236,11 @@ for c in col_order:
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
     df,
-    column_order=display_order,
+    column_order=display_order, # 가짜 NO가 포함된 순서 적용
     column_config=dynamic_config,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True, 
+    hide_index=True, # 진짜 인덱스는 숨김 (안전)
     key="infra_table_editor"
 )
 
@@ -258,14 +258,17 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 수동 일괄 저장 로직 
+# 4. 수동 일괄 저장 로직 (인덱스 불일치 버그 100% 차단)
 if save_btn:
     editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
+            # 🎯 loc 대신 iloc(절대 위치)를 사용하여 정확한 행을 타겟팅합니다.
             doc_id = df.iloc[int(row_idx)]["doc_id"]
+            
+            # 가짜 NO 열은 DB에 저장되지 않도록 삭제
             if "NO" in changes: del changes["NO"]
             
             for k, v in list(changes.items()):
@@ -312,6 +315,7 @@ if save_btn:
             
     if editor_state.get("deleted_rows"):
         for row_idx in editor_state["deleted_rows"]:
+            # 🎯 엉뚱한 행이 지워지는 버그의 원인 차단! 절대 위치(iloc)로 타겟팅.
             doc_id = df.iloc[int(row_idx)]["doc_id"]
             if not str(doc_id).startswith("sample"):
                 try:
@@ -343,62 +347,40 @@ st.markdown("---")
 # 5. 모바일 현장 사진 업로드
 st.subheader("📸 모바일 현장 점검 사진 등록")
 
-# 🎯 사진 열 찾기
+main_col = col_order[0] 
 photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
 
 if photo_col:
-    # 🎯 [핵심 변경] NO + 시설물명 + 점검일을 합쳐서 드롭다운 리스트(딕셔너리)를 생성합니다.
-    name_col = col_order[0] # 일반적으로 시설물명이 들어있는 첫 번째 열
-    date_col = next((c for c in col_order if "일" in c or "날짜" in c), None)
-    
-    facility_options = {}
-    
-    for idx, row in edited_df.iterrows():
-        # 임시 데이터(nan)이거나 삭제된 행은 건너뜁니다.
-        if pd.isna(row['doc_id']) or str(row['doc_id']) == "nan":
-            continue
-            
-        no_val = row.get("NO", "?")
-        name_val = row.get(name_col, "이름없음")
-        date_val = row.get(date_col, "날짜미상") if date_col else ""
-        
-        # 목록에 표시될 멋진 포맷: "[NO. 1] 신천대로 교량 (점검일: 2026-05-27)"
-        label = f"[NO. {no_val}] {name_val} (점검일: {date_val})"
-        
-        # 화면에 보이는 글자(label)를 선택하면, 실제로는 서버 ID(doc_id)가 짝지어지도록 세팅합니다.
-        facility_options[label] = str(row['doc_id'])
-        
-    if facility_options:
-        # 딕셔너리의 키(멋진 포맷)만 뽑아서 드롭다운에 보여줍니다.
-        selected_label = st.selectbox("사진을 매핑할 시설물(NO/점검일 확인)을 선택하세요:", list(facility_options.keys()))
-        # 선택한 텍스트에 해당하는 진짜 서버 ID를 가져옵니다.
-        target_doc_id = facility_options[selected_label]
-        
+    facility_list = edited_df[main_col].dropna().unique()
+    if len(facility_list) > 0:
+        target_facility = st.selectbox(f"사진을 매핑할 [{main_col}]을(를) 선택하세요:", facility_list)
         uploaded_file = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진을 선택하세요.", type=["jpg", "jpeg", "png"])
         
         if uploaded_file is not None:
-            if st.button("🚀 선택한 항목에 사진 등록", type="secondary"):
+            if st.button(f"🚀 선택한 [{main_col}]에 사진 등록", type="secondary"):
                 with st.spinner("이미지 전송 중..."):
                     try:
                         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        file_name = f"infra_photos/{target_doc_id}_{timestamp}.png"
+                        file_name = f"infra_photos/{target_facility}_{timestamp}.png"
                         
                         blob = bucket.blob(file_name)
                         blob.upload_from_string(uploaded_file.read(), content_type="image/png")
                         blob.make_public()
                         public_url = blob.public_url
                         
-                        if target_doc_id.startswith("sample"):
-                            st.warning("먼저 표에 내용을 입력하시고 [일괄 저장]을 누르신 후에 사진을 올려주세요.")
-                        else:
-                            # 🎯 이름이 똑같아도 헷갈리지 않고 정확한 고유 ID에 사진을 꽂아 넣습니다.
-                            db.collection("infra_management").document(target_doc_id).update({photo_col: public_url})
-                            st.success("🎉 사진 등록 및 실시간 매핑 완료!")
-                            st.cache_data.clear()
-                            st.rerun()
+                        target_row = edited_df[edited_df[main_col] == target_facility]
+                        if not target_row.empty:
+                            target_doc_id = str(target_row.iloc[0]["doc_id"])
+                            if target_doc_id in ["", "nan", "None", "<NA>"] or target_doc_id.startswith("sample"):
+                                st.warning("먼저 입력하신 후, 셀 바깥을 클릭하여 DB에 자동 등록된 상태에서 사진을 올려주세요.")
+                            else:
+                                db.collection("infra_management").document(target_doc_id).update({photo_col: public_url})
+                                st.success(f"🎉 {target_facility}에 사진 등록 및 실시간 매핑 완료!")
+                                st.cache_data.clear()
+                                st.rerun()
                     except Exception as e:
                         st.error(f"사진 매핑 실패: {e}")
     else:
-        st.info("등록 가능한 시설물이 없습니다. 위의 표에 데이터를 먼저 입력해주세요.")
+        st.info(f"엑셀 그리드에 [{main_col}]을(를) 먼저 입력해 주세요.")
 else:
     st.warning("이름에 '사진', 'URL', '링크' 중 하나가 포함된 항목(열)이 있어야 사진을 매핑할 수 있습니다.")
