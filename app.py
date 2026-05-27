@@ -117,10 +117,11 @@ date_cols = [c for c in col_order if "일" in c or "날짜" in c]
 for dc in date_cols:
     df[dc] = pd.to_datetime(df[dc], errors="coerce").dt.date
 
-# 🎯 [핵심] 표 맨 앞의 넘버링(NO)을 위해 인덱스를 1부터 꽉 채워줍니다.
-df.index = range(1, len(df) + 1)
+# 🎯 [핵심 버그 수정] 컴퓨터 내부 인덱스는 건드리지 않고, 맨 앞에 가짜 'NO' 열을 물리적으로 끼워 넣습니다.
+df.insert(0, "NO", range(1, len(df) + 1))
+display_order = ["NO"] + col_order # 화면에 보여줄 순서 정의
 
-# ⚙️ 관리 메뉴 (3개의 탭 레이아웃)
+# ⚙️ 관리 메뉴 
 st.subheader("⚙️ 표 기본 설정 관리")
 tab1, tab2, tab3 = st.tabs(["➕ 항목(열) 추가", "📝 이름 일괄 변경", "↔️ 열 순서 영구 고정"])
 
@@ -198,26 +199,24 @@ with tab3:
 
 st.markdown("---")
 
-# 수동 일괄 저장 레이아웃
-col_title, col_save = st.columns([8, 2])
+# 안내 문구 최적화
+col_title, col_save = st.columns([7, 3])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-    st.caption("💡 표 안의 기본 확대(⛶) 모드를 쓰셔도 화면이 튕기지 않습니다. 작성이 끝나면 우측 상단의 **[💾 일괄 저장]**을 꼭 눌러주세요.")
+    st.caption("💡 **Tip:** 표 우측 상단의 확대(⛶)로 넓게 작업하신 후, **축소(ESC)해서 우측 [일괄 저장]**을 누르세요. 창을 줄여도 작성한 내용은 유지됩니다!")
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     save_btn = st.button("💾 변경사항 서버에 일괄 저장", use_container_width=True, type="primary")
 
-# 링크 찌꺼기 텍스트("") 청소
 for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 🎯 맞춤형 열 서식 지정
+# 맞춤형 열 서식 지정
 dynamic_config = {
     "doc_id": None, 
     "등록일시": None,
-    # 숨어있던 인덱스를 'NO'라는 이름의 읽기 전용 숫자 열로 둔갑시킵니다.
-    "_index": st.column_config.NumberColumn("NO", disabled=True, format="%d")
+    "NO": st.column_config.NumberColumn("NO", disabled=True) # 수정 불가하게 잠금
 }
 
 for c in col_order:
@@ -237,18 +236,17 @@ for c in col_order:
 # 3. 엑셀 형태 UI
 edited_df = st.data_editor(
     df,
-    column_order=col_order,
+    column_order=display_order, # 가짜 NO가 포함된 순서 적용
     column_config=dynamic_config,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=False, # 🎯 숨겨뒀던 인덱스 열(NO)을 화면에 표시합니다.
+    hide_index=True, # 진짜 인덱스는 숨김 (안전)
     key="infra_table_editor"
 )
 
-# 📥 엑셀 다운로드 (NO 열 포함)
+# 📥 엑셀 다운로드 
 st.markdown(" ") 
-export_df = edited_df[col_order].copy()
-export_df.insert(0, "NO", edited_df.index) # 엑셀 파일 맨 앞에도 NO 열을 예쁘게 끼워 넣습니다.
+export_df = edited_df[display_order].copy()
 csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
 
 st.download_button(
@@ -260,15 +258,18 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 수동 일괄 저장 로직 (인덱스 변경에 따른 안전한 데이터 추적)
+# 4. 수동 일괄 저장 로직 (인덱스 불일치 버그 100% 차단)
 if save_btn:
     editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
-            # 🎯 바뀐 인덱스 번호에 맞춰 정확한 행을 찾아냅니다.
-            doc_id = df.loc[int(row_idx)]["doc_id"]
+            # 🎯 loc 대신 iloc(절대 위치)를 사용하여 정확한 행을 타겟팅합니다.
+            doc_id = df.iloc[int(row_idx)]["doc_id"]
+            
+            # 가짜 NO 열은 DB에 저장되지 않도록 삭제
+            if "NO" in changes: del changes["NO"]
             
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
@@ -280,9 +281,10 @@ if save_btn:
                         changes[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
 
             if str(doc_id).startswith("sample"):
-                row_full = df.loc[int(row_idx)].to_dict()
+                row_full = df.iloc[int(row_idx)].to_dict()
                 row_full.update(changes)
                 if "doc_id" in row_full: del row_full["doc_id"]
+                if "NO" in row_full: del row_full["NO"]
                 row_full["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
                 for dc in date_cols:
                     if dc in row_full: row_full[dc] = str(row_full.get(dc, datetime.now().date()))
@@ -295,6 +297,8 @@ if save_btn:
     if editor_state.get("added_rows"):
         for row in editor_state["added_rows"]:
             row_data = row.copy()
+            if "NO" in row_data: del row_data["NO"]
+            
             row_data["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
             for dc in date_cols:
                 if dc in row_data: row_data[dc] = str(row_data.get(dc, datetime.now().date()))
@@ -311,8 +315,8 @@ if save_btn:
             
     if editor_state.get("deleted_rows"):
         for row_idx in editor_state["deleted_rows"]:
-            # 🎯 삭제 시에도 정확한 행을 추적합니다.
-            doc_id = df.loc[int(row_idx)]["doc_id"]
+            # 🎯 엉뚱한 행이 지워지는 버그의 원인 차단! 절대 위치(iloc)로 타겟팅.
+            doc_id = df.iloc[int(row_idx)]["doc_id"]
             if not str(doc_id).startswith("sample"):
                 try:
                     doc_ref = db.collection("infra_management").document(str(doc_id))
