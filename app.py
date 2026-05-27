@@ -6,8 +6,8 @@ import json
 from datetime import datetime
 import streamlit.components.v1 as components
 
-# 페이지 기본 설정
-st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
+# 🏢 페이지 기본 설정 (대구공공시설관리공단 시설관리팀 운영 웹으로 명칭 변경)
+st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
 
 # 🛡️ [단축키 방패] C키 팝업 창 방지
 components.html(
@@ -49,7 +49,8 @@ if not firebase_admin._apps:
 db = firestore.client()
 bucket = storage.bucket()
 
-st.title("📱 스마트 인프라 통합 관리 웹")
+# 🏢 메인 타이틀 변경
+st.title("📱 대구공공시설관리공단 시설관리팀 운영 웹")
 st.markdown("---")
 
 # ☁️ 좌측 사이드바 용량 표시
@@ -69,12 +70,13 @@ with st.sidebar:
     except Exception as e:
         st.error(f"용량 정보를 불러올 수 없습니다. ({e})")
 
-# 클라우드 DB에서 열 순서 불러오기
+# 클라우드 DB에서 열 순서 불러오기 (하수관로 기본 서식으로 초기 세팅)
 settings_ref = db.collection("system").document("settings")
 settings_snap = settings_ref.get()
 
 if not settings_snap.exists:
-    initial_order = ["시설물명", "상태", "점검자", "최종점검일", "사진URL", "시설물 위치"]
+    # 대리님의 하수관로 이력대장 맞춤형 초기 열 순서 세팅
+    initial_order = ["점검일", "사업처", "하천,지역", "시설물 종류", "시설명", "시설물 위치", "점검유형", "점검자", "점검내용", "점검결과", "현장 사진", "상태", "비고"]
     settings_ref.set({"column_order": initial_order})
     col_order = initial_order
 else:
@@ -91,7 +93,7 @@ def load_infra_data():
         data_list.append(d)
     
     if not data_list:
-        return pd.DataFrame([{"doc_id": "sample1", "시설물명": "신천대로 교량 A지점", "상태": "정상", "점검자": "관리자", "사진URL": "", "최종점검일": "2026-05-22", "등록일시": "2026-01-01 00:00:00", "시설물 위치": ""}])
+        return pd.DataFrame([{"doc_id": "sample1", "점검일": "2026-02-25", "사업처": "서부", "하천,지역": "진천천", "시설물 종류": "스마트맨홀", "시설명": "진천 1번 맨홀", "시설물 위치": "", "점검유형": "일상점검", "점검자": "관리자", "점검내용": "스마트 맨홀 철거", "점검결과": "철거 완료", "현장 사진": "", "상태": "정상", "비고": "", "등록일시": "2026-01-01 00:00:00"}])
     
     df_temp = pd.DataFrame(data_list)
     if "등록일시" not in df_temp.columns:
@@ -199,10 +201,10 @@ with tab3:
 
 st.markdown("---")
 
-# 안내 문구 최적화
+# 🎯 그리드 상단 레이아웃 및 안내문구 (하수관로 시설물 점검이력대장으로 명칭 변경)
 col_title, col_save = st.columns([7, 3])
 with col_title:
-    st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
+    st.subheader("📊 하수관로 시설물 점검이력대장 (엑셀 형태)")
     st.caption("💡 **Tip:** 표 우측 상단의 확대(⛶)로 넓게 작업하신 후, **축소(ESC)해서 우측 [일괄 저장]**을 누르세요. 창을 줄여도 작성한 내용은 유지됩니다!")
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
@@ -252,13 +254,13 @@ csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
 st.download_button(
     label="📥 현재 표 데이터 다운로드 (Excel 호환)",
     data=csv_data,
-    file_name=f"인프라_인벤토리_현황_{datetime.now().strftime('%Y%m%d')}.csv",
+    file_name=f"하수관로_시설물_점검이력대장_{datetime.now().strftime('%Y%m%d')}.csv",
     mime="text/csv",
     use_container_width=True,
     type="secondary"
 )
 
-# 4. 수동 일괄 저장 로직 
+# 4. 수동 일괄 저장 로직
 if save_btn:
     editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
@@ -346,15 +348,12 @@ st.subheader("📸 모바일 현장 점검 사진 등록")
 photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
 
 if photo_col:
-    # 🎯 [버그 수정] 사용자가 열 순서를 바꿔도 똑똑하게 '이름'과 '날짜'를 구분해서 찾아냅니다.
     date_col = next((c for c in col_order if "일" in c or "날짜" in c), None)
     
-    # 시설명 열 찾기 ("명"이나 "이름"이 들어간 열 1순위)
     name_candidates = [c for c in col_order if "명" in c or "이름" in c]
     if name_candidates:
         name_col = name_candidates[0]
     else:
-        # "명"이 안 들어가 있다면, 날짜가 아닌 열 중에서 가장 첫 번째 것을 이름으로 추정
         other_cols = [c for c in col_order if c != date_col]
         name_col = other_cols[0] if other_cols else col_order[0]
     
