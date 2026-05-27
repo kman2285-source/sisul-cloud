@@ -9,11 +9,10 @@ import streamlit.components.v1 as components
 # 페이지 기본 설정 (모바일 최적화 레이아웃)
 st.set_page_config(page_title="스마트 인프라 관리 시스템", layout="wide")
 
-# 🛡️ [단축키 무력화 방패 & 스크롤 튕김 방지 닻]
+# 🛡️ [단축키 무력화 방패] C키 팝업 방지
 components.html(
     """
     <script>
-    // 1. 단축키 방어 (C키 팝업 방지)
     function blockCacheShortcut(e) {
         if (e.key === 'c' || e.key === 'C') {
             const activeTag = window.parent.document.activeElement ? window.parent.document.activeElement.tagName.toLowerCase() : '';
@@ -31,32 +30,6 @@ components.html(
     window.addEventListener('keydown', blockCacheShortcut, true);
     window.addEventListener('keypress', blockCacheShortcut, true);
     window.addEventListener('keyup', blockCacheShortcut, true);
-
-    // 2. 스크롤 닻 (새로고침 시 맨 위로 튕기는 현상 완벽 방어)
-    const parentWin = window.parent;
-    const parentDoc = parentWin.document;
-    
-    function getScrollable() {
-        return parentDoc.querySelector('.main') || parentDoc.scrollingElement || parentWin;
-    }
-
-    parentWin.addEventListener('scroll', function() {
-        const scrollable = getScrollable();
-        const pos = scrollable.scrollTop || parentWin.scrollY || 0;
-        sessionStorage.setItem('st_scroll_pos', pos);
-    }, true);
-
-    setTimeout(function() {
-        const savedPos = sessionStorage.getItem('st_scroll_pos');
-        if (savedPos) {
-            const scrollable = getScrollable();
-            if (scrollable.scrollTo) {
-                scrollable.scrollTo(0, parseInt(savedPos));
-            } else {
-                scrollable.scrollTop = parseInt(savedPos);
-            }
-        }
-    }, 100); 
     </script>
     """,
     height=0, width=0
@@ -222,33 +195,22 @@ with tab3:
 
 st.markdown("---")
 
-# 엑셀 집중 모드 UI 배치 및 CSS 제어 로직
-col_title, col_undo, col_focus = st.columns([6, 2, 2])
+# 🎯 [핵심] 일괄 저장 버튼과 집중 모드 배치
+col_title, col_save, col_focus = st.columns([6, 2, 2])
 with col_title:
     st.subheader("📊 인프라 자산 관리 그리드 (엑셀 형태)")
-    st.caption("💡 **[삭제 방법]** 모바일은 왼쪽 체크박스 선택, PC는 마우스 드래그 후 **Delete** 키를 누르면 자동 삭제됩니다.")
+    st.caption("💡 표를 마음껏 수정하시고, 오류가 났을 땐 **Ctrl+Z**를 누르세요. 작업이 끝나면 꼭 우측의 **[💾 일괄 저장]**을 누르셔야 서버에 반영됩니다.")
 
-with col_undo:
-    if "undo_stack" in st.session_state and len(st.session_state.undo_stack) > 0:
-        if st.button("↩️ 직전 작업 취소 (Undo)", use_container_width=True, type="primary"):
-            with st.spinner("DB 복구 중..."):
-                last_actions = st.session_state.undo_stack.pop()
-                for action in last_actions:
-                    if action["type"] == "add":
-                        db.collection("infra_management").document(action["doc_id"]).delete()
-                    elif action["type"] == "edit":
-                        db.collection("infra_management").document(action["doc_id"]).update(action["data"])
-                    elif action["type"] == "delete":
-                        db.collection("infra_management").document(action["doc_id"]).set(action["data"])
-                st.cache_data.clear()
-                st.rerun()
+with col_save:
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+    # 🎯 데이터 입력을 다 끝내고 누르는 진짜 저장 버튼!
+    save_btn = st.button("💾 변경사항 서버에 일괄 저장", use_container_width=True, type="primary")
 
 with col_focus:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
     focus_mode = st.toggle("🖥️ 엑셀 집중 모드 (ON)", value=False)
 
 if focus_mode:
-    # 🎯 [강력한 CSS 강제 주입] 파이썬 설정을 무시하고 브라우저 단위에서 표를 모니터 85% 크기로 찢어버립니다.
     st.markdown("""
         <style>
         .block-container {
@@ -263,7 +225,7 @@ if focus_mode:
         [data-testid="stSidebar"] {display: none !important;}
         [data-testid="collapsedControl"] {display: none !important;}
         
-        /* 엑셀 표 컨테이너 높이 강제 고정 (모니터 세로의 85%) */
+        /* 표 컨테이너 높이 강제 고정 */
         [data-testid="stDataFrame"], [data-testid="stDataFrame"] > div {
             height: 85vh !important;
             min-height: 85vh !important;
@@ -276,7 +238,7 @@ for c in col_order:
     if any(keyword in c for keyword in ["사진", "URL", "링크", "위치", "지도"]):
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
-# 맞춤형 열 서식 지정 로직
+# 맞춤형 열 서식 지정
 dynamic_config = {"doc_id": None, "등록일시": None}
 for c in col_order:
     if "상태" in c:
@@ -290,16 +252,21 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "내용", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-# 3. 엑셀 형태 UI (이번엔 파이썬한테 height를 주지 않고 CSS가 알아서 찢도록 놔둡니다)
-edited_df = st.data_editor(
-    df,
-    column_order=col_order,
-    column_config=dynamic_config,
-    num_rows="dynamic",
-    use_container_width=True,
-    hide_index=True,
-    key="infra_table_editor"
-)
+editor_args = {
+    "data": df,
+    "column_order": col_order,
+    "column_config": dynamic_config,
+    "num_rows": "dynamic",
+    "use_container_width": True,
+    "hide_index": True,
+    "key": "infra_table_editor"
+}
+
+if focus_mode:
+    editor_args["height"] = 850
+
+# 3. 엑셀 형태 UI
+edited_df = st.data_editor(**editor_args)
 
 # 📥 엑셀 다운로드
 st.markdown(" ") 
@@ -315,16 +282,14 @@ st.download_button(
     type="secondary"
 )
 
-# 4. 실시간 동기화, 지도 주소 변환 및 역추적(Undo) 로그 저장 로직
-if "infra_table_editor" in st.session_state:
-    editor_state = st.session_state["infra_table_editor"]
+# 4. 🎯 [수동 일괄 저장 로직] 버튼을 눌렀을 때만 DB 통신을 합니다!
+if save_btn:
+    editor_state = st.session_state.get("infra_table_editor", {})
     has_changes = False
-    undo_actions = []
     
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
             doc_id = df.iloc[int(row_idx)]["doc_id"]
-            old_data = df.iloc[int(row_idx)].to_dict()
             
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
@@ -343,15 +308,9 @@ if "infra_table_editor" in st.session_state:
                 for dc in date_cols:
                     if dc in row_full: row_full[dc] = str(row_full.get(dc, datetime.now().date()))
                 row_full = {k: ("" if pd.isna(v) else v) for k, v in row_full.items()}
-                _, doc_ref = db.collection("infra_management").add(row_full)
-                undo_actions.append({"type": "add", "doc_id": doc_ref.id})
+                db.collection("infra_management").add(row_full)
             else:
                 db.collection("infra_management").document(str(doc_id)).update(changes)
-                undo_data = {}
-                for k in changes.keys():
-                    old_val = old_data.get(k, "")
-                    undo_data[k] = str(old_val) if isinstance(old_val, type(datetime.now().date())) else old_val
-                undo_actions.append({"type": "edit", "doc_id": str(doc_id), "data": undo_data})
         has_changes = True
                 
     if editor_state.get("added_rows"):
@@ -368,8 +327,7 @@ if "infra_table_editor" in st.session_state:
                         row_data[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
                         
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
-            _, doc_ref = db.collection("infra_management").add(row_data)
-            undo_actions.append({"type": "add", "doc_id": doc_ref.id})
+            db.collection("infra_management").add(row_data)
         has_changes = True
             
     if editor_state.get("deleted_rows"):
@@ -388,22 +346,17 @@ if "infra_table_editor" in st.session_state:
                                 blob_name = photo_url.split("sisul-2026.firebasestorage.app/")[-1]
                                 try: bucket.blob(blob_name).delete()
                                 except Exception: pass
-                        undo_actions.append({"type": "delete", "doc_id": str(doc_id), "data": doc_data})
                     doc_ref.delete()
                 except Exception as e:
-                    st.error(f"데이터 파기 실패: {e}")
+                    pass
         has_changes = True
                 
     if has_changes:
-        if "undo_stack" not in st.session_state:
-            st.session_state.undo_stack = []
-        if len(undo_actions) > 0:
-            st.session_state.undo_stack.append(undo_actions)
-            if len(st.session_state.undo_stack) > 10:
-                st.session_state.undo_stack.pop(0)
-                
         st.cache_data.clear()
+        st.success("🎉 작성하신 모든 내용이 클라우드에 안전하게 일괄 저장되었습니다!")
         st.rerun()
+    else:
+        st.info("새로 변경되거나 추가된 내용이 없습니다.")
 
 st.markdown("---")
 
