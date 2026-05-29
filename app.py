@@ -68,10 +68,8 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                     
                     # 🎯 허가된 팀원 구글 이메일 명단 (화이트리스트)
                     allowed_emails = [
-                        "kimjaeyoung@gmail.com",  # 본인 계정
-                        "team_member1@dpfc.or.kr", 
-                        "test@gmail.com"
-                    ]
+                        "sisul2026.qr@gmail.com  # 본인 계정
+                                            ]
                     
                     if user_email in allowed_emails:
                         st.session_state.user_email = user_email
@@ -89,7 +87,7 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
                 if st.form_submit_button("최종 웹 접속하기", use_container_width=True):
                     # 💡 설정하신 공용 비밀번호
-                    if password == "dpfc2026!":
+                    if password == "sisul123!":
                         st.session_state.pw_auth = True
                         st.success("✅ 이중 인증 완료! 잠시 후 화면을 불러옵니다...")
                         st.rerun()
