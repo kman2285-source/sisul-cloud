@@ -68,7 +68,7 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                     
                     # 🎯 허가된 팀원 구글 이메일 명단 (화이트리스트)
                     allowed_emails = [
-                        "sisul2026.qr@gmail.com  # 본인 계정
+                        "sisul2026.qr@gmail.com",  # 본인 계정
                                             ]
                     
                     if user_email in allowed_emails:
