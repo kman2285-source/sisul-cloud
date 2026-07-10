@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import base64  # 🔐 구글 ID 토큰 해독용
 from streamlit_oauth import OAuth2Component  # 🔐 구글 OAuth 로그인용
+import io          # 엑셀 파일 생성용
+import xlsxwriter  # 엑셀 파일 생성 및 이미지 삽입용
+import requests    # 이미지 다운로드용
 
 # 🏢 페이지 기본 설정
 st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
@@ -485,19 +488,85 @@ edited_df = st.data_editor(
     key=editor_key  
 )
 
-# 📥 엑셀 다운로드 
+# 📥 엑셀 다운로드 (CSV & 사진 포함 XLSX)
 st.markdown(" ") 
 export_df = edited_df[display_order].copy()
-csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
 
-st.download_button(
-    label="📥 현재 표 데이터 다운로드 (Excel 호환)",
-    data=csv_data,
-    file_name=f"하수관로_시설물_점검이력대장_{datetime.now().strftime('%Y%m%d')}.csv",
-    mime="text/csv",
-    use_container_width=True,
-    type="secondary"
-)
+col_down1, col_down2 = st.columns(2)
+
+with col_down1:
+    # 1. 빠르고 가벼운 CSV (텍스트만)
+    csv_data = export_df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button(
+        label="📥 기본 표 다운로드 (빠름, 텍스트 전용)",
+        data=csv_data,
+        file_name=f"하수관로_시설물_점검이력대장_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+        type="secondary"
+    )
+
+with col_down2:
+    # 2. 사진이 포함된 진짜 엑셀(.xlsx) 생성 기능
+    if st.button("🖼️ 사진 포함 정식 엑셀 생성하기", use_container_width=True):
+        photo_col_name = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
+        
+        with st.spinner("클라우드에서 현장 사진들을 불러와 엑셀에 붙여넣고 있습니다. 잠시만 기다려주세요..."):
+            output = io.BytesIO()
+            workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+            worksheet = workbook.add_worksheet("점검이력대장")
+            
+            # 헤더 서식 및 쓰기
+            header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
+            cell_format = workbook.add_format({'border': 1, 'valign': 'vcenter'})
+            
+            headers = display_order
+            for col_num, header in enumerate(headers):
+                worksheet.write(0, col_num, header, header_format)
+                worksheet.set_column(col_num, col_num, 15) # 기본 열 너비
+            
+            photo_col_idx = headers.index(photo_col_name) if photo_col_name in headers else -1
+            if photo_col_idx != -1:
+                worksheet.set_column(photo_col_idx, photo_col_idx, 30) # 사진 열 너비 넓게
+            
+            # 데이터 및 사진 쓰기
+            for row_num, row_data in enumerate(export_df.values):
+                worksheet.set_row(row_num + 1, 80) # 각 행의 높이를 사진이 들어갈 만큼 넓힘
+                
+                for col_num, cell_data in enumerate(row_data):
+                    if col_num == photo_col_idx and cell_data: 
+                        # 사진 항목일 때
+                        url = cell_data[0] if isinstance(cell_data, list) else str(cell_data)
+                        if url.startswith("http"):
+                            try:
+                                img_res = requests.get(url, timeout=5)
+                                img_data = io.BytesIO(img_res.content)
+                                # 셀 중앙에 맞게 이미지 축소 삽입 (비율 조정)
+                                worksheet.insert_image(row_num + 1, col_num, url, 
+                                                     {'image_data': img_data, 'x_scale': 0.15, 'y_scale': 0.15, 'x_offset': 5, 'y_offset': 5})
+                            except Exception:
+                                worksheet.write(row_num + 1, col_num, "사진 로드 실패", cell_format)
+                        else:
+                            worksheet.write(row_num + 1, col_num, "", cell_format)
+                    else:
+                        # 일반 텍스트 데이터일 때
+                        val = str(cell_data) if cell_data is not None else ""
+                        worksheet.write(row_num + 1, col_num, val, cell_format)
+            
+            workbook.close()
+            st.session_state.excel_output = output.getvalue()
+
+        st.success("✅ 엑셀 파일 생성이 완료되었습니다! 아래 버튼을 눌러 저장하세요.")
+
+    if "excel_output" in st.session_state:
+        st.download_button(
+            label="💾 완성된 엑셀(.xlsx) 저장하기",
+            data=st.session_state.excel_output,
+            file_name=f"하수관로_시설물_점검이력대장_사진포함_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary"
+        )
 
 # 4. 수동 일괄 저장 로직
 photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
@@ -622,7 +691,13 @@ if photo_col:
         selected_label = st.selectbox("사진을 매핑할 시설물을 선택하세요:", list(facility_options.keys()))
         target_doc_id = facility_options[selected_label]
         
-        uploaded_files = st.file_uploader("스마트폰 카메라로 촬영하거나 갤러리에서 사진들을 선택하세요. (여러 장 동시 선택 가능)", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+        # 💡 해결방법 1: key에 target_doc_id를 넣어 시설물이 바뀔 때마다 업로더를 텅 빈 새 것으로 교체합니다.
+        uploaded_files = st.file_uploader(
+            "스마트폰 카메라로 촬영하거나 갤러리에서 사진들을 선택하세요. (여러 장 동시 선택 가능)", 
+            type=["jpg", "jpeg", "png"], 
+            accept_multiple_files=True,
+            key=f"uploader_{target_doc_id}"
+        )
         
         target_doc_ref = db.collection("infra_management").document(target_doc_id)
         doc_snap = target_doc_ref.get()
