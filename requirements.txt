@@ -2,3 +2,5 @@ streamlit
 pandas
 firebase-admin
 streamlit-oauth
+xlsxwriter
+requests
