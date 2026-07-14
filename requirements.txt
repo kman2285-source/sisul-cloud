@@ -4,3 +4,4 @@ firebase-admin
 streamlit-oauth
 xlsxwriter
 requests
+Pillow
