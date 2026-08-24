@@ -41,23 +41,23 @@ if not CLIENT_ID or not REDIRECT_URI:
 if not (st.session_state.google_auth and st.session_state.pw_auth):
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1, 1])
-    
+
     with col2:
         st.title("🔒 시설관리팀 운영 웹")
         st.markdown("---")
-        
+
         # [1단계] 구글 계정 인증 단계
         if not st.session_state.google_auth:
             st.info("📢 1단계: 업무용 구글 계정으로 인증해주세요.")
-            
+
             oauth2 = OAuth2Component(
-                CLIENT_ID, CLIENT_SECRET, 
-                "https://accounts.google.com/o/oauth2/v2/auth", 
-                "https://oauth2.googleapis.com/token", 
-                "https://oauth2.googleapis.com/token", 
+                CLIENT_ID, CLIENT_SECRET,
+                "https://accounts.google.com/o/oauth2/v2/auth",
+                "https://oauth2.googleapis.com/token",
+                "https://oauth2.googleapis.com/token",
                 "https://oauth2.googleapis.com/revoke"
             )
-            
+
             result = oauth2.authorize_button(
                 name="Google 계정으로 계속하기",
                 icon="https://www.google.com/favicon.ico",
@@ -66,7 +66,7 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                 key="google_login",
                 use_container_width=True
             )
-            
+
             if result:
                 id_token = result.get("token", {}).get("id_token")
                 if id_token:
@@ -74,24 +74,24 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                     payload += "=" * ((4 - len(payload) % 4) % 4)
                     decoded_payload = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
                     user_email = decoded_payload.get("email")
-                    
+
                     # 🎯 허가된 팀원 구글 이메일 명단 (화이트리스트)
                     allowed_emails = [
                         "sisul2026.qr@gmail.com",  # 본인 계정
                     ]
-                    
+
                     if user_email in allowed_emails:
                         st.session_state.user_email = user_email
                         st.session_state.google_auth = True
                         st.rerun()
                     else:
                         st.error(f"❌ 접속 권한이 없는 이메일 계정입니다. ({user_email})")
-                        
+
         # [2단계] 구글 인증 완료 후 비밀번호 입력 단계
         elif not st.session_state.pw_auth:
             st.success(f"👤 {st.session_state.user_email} 님, 1차 인증 성공")
             st.info("🔑 2단계: 시설관리팀 운영 비밀번호를 입력해주세요.")
-            
+
             with st.form("pw_form"):
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
                 if st.form_submit_button("최종 웹 접속하기", use_container_width=True):
@@ -101,7 +101,7 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                         st.rerun()
                     else:
                         st.error("❌ 비밀번호가 일치하지 않습니다.")
-                        
+
     st.stop()
 # ---------------------------------------------------------
 
@@ -112,9 +112,9 @@ components.html(
     function blockCacheShortcut(e) {
         if (e.key === 'c' || e.key === 'C') {
             const activeTag = window.parent.document.activeElement ? window.parent.document.activeElement.tagName.toLowerCase() : '';
-            if (activeTag === 'input' || activeTag === 'textarea') return; 
-            if (e.ctrlKey || e.metaKey) return; 
-            
+            if (activeTag === 'input' || activeTag === 'textarea') return;
+            if (e.ctrlKey || e.metaKey) return;
+
             e.stopImmediatePropagation();
             e.stopPropagation();
             e.preventDefault();
@@ -138,7 +138,7 @@ components.html(
     setInterval(function() {
         fetch(window.parent.location.href, { method: 'HEAD', cache: 'no-store' });
         console.log("서버 세션 연장 핑(Ping) 전송 완료");
-    }, 180000); 
+    }, 180000);
     </script>
     """,
     height=0, width=0
@@ -178,7 +178,7 @@ with st.sidebar:
         st.session_state.user_email = ""
         st.rerun()
     st.markdown("---")
-    
+
     st.subheader("☁️ 클라우드 저장소 상태")
     try:
         blobs = bucket.list_blobs()
@@ -187,7 +187,7 @@ with st.sidebar:
         total_mb = 5120.0
         left_mb = round(total_mb - used_mb, 1)
         usage_percent = min(used_mb / total_mb, 1.0)
-            
+
         st.metric(label="사진 저장소 사용량", value=f"{used_mb} MB", delta=f"남은 무료 용량: {left_mb} MB (총 5GB)", delta_color="normal")
         st.progress(usage_percent, text=f"사용률: {usage_percent * 100:.3f}%")
         st.caption("※ 텍스트 데이터(Firestore)는 용량이 매우 적어 과금될 확률이 사실상 0%입니다.")
@@ -210,20 +210,20 @@ else:
 def load_infra_data():
     docs = db.collection("infra_management").stream()
     data_list = []
-    
+
     for doc in docs:
         d = doc.to_dict()
         d["doc_id"] = doc.id
-        
+
         for k, v in d.items():
             if isinstance(v, list):
                 d[k] = v[0] if len(v) > 0 else None
-                
+
         data_list.append(d)
-    
+
     if not data_list:
         return pd.DataFrame([{"doc_id": "sample1", "점검일": "2026-02-25", "사업처": "서부", "하천,지역": "진천천", "시설물 종류": "스마트맨홀", "시설명": "진천 1번 맨홀", "시설물 위치": "", "점검유형": "일상점검", "점검자": "관리자", "점검내용": "스마트 맨홀 철거", "점검결과": "철거 완료", "현장 사진": "", "상태": "정상", "비고": "", "등록일시": "2026-01-01 00:00:00"}])
-    
+
     df_temp = pd.DataFrame(data_list)
     if "등록일시" not in df_temp.columns:
         df_temp["등록일시"] = "2000-01-01 00:00:00"
@@ -240,7 +240,7 @@ if "NO" in df.columns:
 for c in col_order:
     if c not in df.columns:
         df[c] = ""
-        
+
 rogue_cols = [c for c in df.columns if c not in col_order and c not in ["doc_id", "등록일시", "NO"]]
 if rogue_cols:
     col_order.extend(rogue_cols)
@@ -255,7 +255,7 @@ for dc in date_cols:
 
 # NO 세팅
 df.insert(0, "NO", range(1, len(df) + 1))
-display_order = ["NO"] + col_order 
+display_order = ["NO"] + col_order
 
 # 고급 설정 메뉴
 with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기능", expanded=False):
@@ -265,16 +265,16 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
         st.caption("💡 선택한 기존 행의 **바로 윗 줄(위치)**에 새로운 빈 데이터 행을 강제로 끼워 넣습니다.")
         name_col_for_row = next((c for c in col_order if "명" in c or "이름" in c), col_order[0])
         row_position_options = ["맨 앞에 삽입", "맨 뒤에 추가"]
-        
+
         for idx, row in df.iterrows():
             if not str(row["doc_id"]).startswith("sample"):
                 no_val = row["NO"]
                 name_val = row.get(name_col_for_row, "데이터")
                 row_position_options.append(f"[NO. {no_val}] '{name_val}' 행 위에 삽입")
-                
+
         with st.form("insert_row_form", clear_on_submit=True):
             selected_row_pos = st.selectbox("어느 위치에 행을 삽입할까요?", row_position_options)
-            
+
             if st.form_submit_button("⚡ 지정 위치에 행 삽입 실행"):
                 with st.spinner("지정된 위치에 빈 줄 끼워 넣는 중..."):
                     if selected_row_pos == "맨 앞에 삽입":
@@ -290,7 +290,7 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
                         try:
                             target_no = int(selected_row_pos.split("]")[0].split(". ")[1])
                             target_idx = df[df["NO"] == target_no].index[0]
-                            
+
                             if target_idx == 0:
                                 first_ts = parse_timestamp(df.iloc[0]["등록일시"])
                                 new_timestamp = (first_ts - timedelta(milliseconds=500)).strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -301,12 +301,12 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
                                 new_timestamp = midpoint.strftime("%Y-%m-%d %H:%M:%S.%f")
                         except Exception:
                             new_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-                    
+
                     new_row_payload = {c: "" for c in col_order}
                     new_row_payload["등록일시"] = new_timestamp
                     for dc in date_cols:
                         new_row_payload[dc] = str(datetime.now().date())
-                        
+
                     db.collection("infra_management").add(new_row_payload)
                     st.success("🎉 지정된 위치에 새로운 행이 성공적으로 삽입되었습니다!")
                     st.session_state.table_version += 1
@@ -318,18 +318,18 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
             new_col_name = st.text_input("새 항목 이름", placeholder="예: 관로 상태")
             position_options = ["맨 뒤에 추가", "맨 앞에 삽입"] + [f"'{c}' 열 앞에 삽입" for c in col_order]
             insert_pos = st.selectbox("삽입할 위치 지정", position_options)
-            
+
             if st.form_submit_button("➕ 항목 삽입/추가") and new_col_name:
                 new_col_name = new_col_name.strip()
-                if new_col_name in df.columns or new_col_name == "NO": 
+                if new_col_name in df.columns or new_col_name == "NO":
                     st.warning("이미 표에 존재하는 항목 이름입니다.")
-                elif new_col_name in ["doc_id", "등록일시"]: 
+                elif new_col_name in ["doc_id", "등록일시"]:
                     st.error("시스템 예약어는 사용할 수 없습니다.")
                 else:
                     with st.spinner("항목 삽입 중..."):
                         docs = db.collection("infra_management").stream()
                         for doc in docs: doc.reference.update({new_col_name: ""})
-                        
+
                         if insert_pos == "맨 뒤에 추가":
                             col_order.append(new_col_name)
                         elif insert_pos == "맨 앞에 삽입":
@@ -338,9 +338,9 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
                             target_col = insert_pos.split("'")[1]
                             target_idx = col_order.index(target_col)
                             col_order.insert(target_idx, new_col_name)
-                        
+
                         settings_ref.update({"column_order": col_order})
-                        st.session_state.table_version += 1  
+                        st.session_state.table_version += 1
                         st.cache_data.clear()
                         st.rerun()
 
@@ -351,9 +351,9 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
             new_name = st.text_input("새로운 항목 이름", placeholder="예: 점검결과")
             if st.form_submit_button("✏️ 이름 변경 적용") and old_name and new_name:
                 new_name = new_name.strip()
-                if new_name in df.columns: 
+                if new_name in df.columns:
                     st.warning("이미 표에 존재하는 이름입니다.")
-                elif new_name in ["doc_id", "등록일시", "NO"]: 
+                elif new_name in ["doc_id", "등록일시", "NO"]:
                     st.error("시스템 예약어는 사용할 수 없습니다.")
                 else:
                     with st.spinner("데이터 이전 및 이름 변경 중..."):
@@ -369,7 +369,7 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
                         col_order[idx] = new_name
                         settings_ref.update({"column_order": col_order})
                         st.success(f"'{old_name}' ➔ '{new_name}' 변경 완료!")
-                        st.session_state.table_version += 1  
+                        st.session_state.table_version += 1
                         st.cache_data.clear()
                         st.rerun()
 
@@ -379,7 +379,7 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
             "항목(열) 이름": col_order,
             "출력 순서 (숫자가 작을수록 왼쪽 배치)": [i + 1 for i in range(len(col_order))]
         })
-        
+
         edited_order_df = st.data_editor(
             order_data,
             column_config={
@@ -390,13 +390,13 @@ with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기�
             use_container_width=True,
             key="column_reorder_matrix"
         )
-        
+
         if st.button("💾 순서 영구 조정 적용", use_container_width=True, type="primary"):
             with st.spinner("클라우드 서버에 순서 고정 중..."):
                 new_order = edited_order_df.sort_values("출력 순서 (숫자가 작을수록 왼쪽 배치)")["항목(열) 이름"].tolist()
                 settings_ref.set({"column_order": new_order})
                 st.success("🎉 열 순서 설정이 데이터베이스에 영구 반영되었습니다!")
-                st.session_state.table_version += 1  
+                st.session_state.table_version += 1
                 st.cache_data.clear()
                 st.rerun()
 
@@ -408,7 +408,7 @@ with st.expander("➕ [안전 입력] 새로운 현장 점검 결과 단건 등�
     with st.form("safe_single_entry_form", clear_on_submit=True):
         new_data = {}
         cols = st.columns(2)
-        
+
         for i, c in enumerate(col_order):
             with cols[i % 2]:
                 if "상태" in c:
@@ -422,16 +422,16 @@ with st.expander("➕ [안전 입력] 새로운 현장 점검 결과 단건 등�
                     new_data[c] = ""
                 else:
                     new_data[c] = st.text_input(c, placeholder=f"{c} 입력")
-        
+
         if st.form_submit_button("🚀 클라우드로 즉시 전송하기", type="primary", use_container_width=True):
             with st.spinner("안전하게 데이터 전송 중..."):
                 for k, v in new_data.items():
                     if isinstance(v, type(datetime.now().date())):
                         new_data[k] = str(v)
-                
+
                 new_data["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
                 db.collection("infra_management").add(new_data)
-                
+
                 st.session_state.table_version += 1
                 st.cache_data.clear()
                 st.success("🎉 데이터가 증발 없이 안전하게 서버에 전송되었습니다!")
@@ -452,9 +452,9 @@ for c in col_order:
         df[c] = df[c].map(lambda x: None if pd.isna(x) or str(x).strip() == "" else x)
 
 dynamic_config = {
-    "doc_id": None, 
+    "doc_id": None,
     "등록일시": None,
-    "NO": st.column_config.NumberColumn("NO", disabled=True) 
+    "NO": st.column_config.NumberColumn("NO", disabled=True)
 }
 
 for c in col_order:
@@ -479,11 +479,11 @@ edited_df = st.data_editor(
     column_config=dynamic_config,
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True, 
-    key=editor_key  
+    hide_index=True,
+    key=editor_key
 )
 
-st.markdown(" ") 
+st.markdown(" ")
 export_df = edited_df[display_order].copy()
 
 col_down1, col_down2 = st.columns(2)
@@ -502,66 +502,99 @@ with col_down1:
 with col_down2:
     if st.button("🖼️ 사진 포함 정식 엑셀 생성하기", use_container_width=True):
         photo_col_name = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
-        
-        with st.spinner("클라우드에서 현장 사진들을 불러와 엑셀 셀 크기에 딱 맞게 자동 조정 중입니다..."):
+
+        with st.spinner("클라우드에서 현장 사진들을 모두 불러와 엑셀 셀 크기에 딱 맞게 자동 조정 중입니다..."):
+
+            # 🔧 [개선] 표에는 대표사진 1장만 남아있으므로, DB에서 각 행의 '전체 사진 목록'을 doc_id 기준으로 다시 불러온다
+            raw_docs = db.collection("infra_management").stream()
+            full_photos_by_id = {}
+            for doc in raw_docs:
+                d = doc.to_dict()
+                raw_val = d.get(photo_col_name, []) if photo_col_name else []
+                if isinstance(raw_val, list):
+                    urls = [str(u).strip() for u in raw_val if str(u).strip().startswith("http")]
+                elif isinstance(raw_val, str) and raw_val.strip().startswith("http"):
+                    urls = [raw_val.strip()]
+                else:
+                    urls = []
+                full_photos_by_id[doc.id] = urls
+
             output = io.BytesIO()
             workbook = xlsxwriter.Workbook(output, {'in_memory': True})
             worksheet = workbook.add_worksheet("점검이력대장")
-            
+
             header_format = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
             cell_format = workbook.add_format({'border': 1, 'valign': 'vcenter'})
-            
+
             headers = display_order
             for col_num, header in enumerate(headers):
                 worksheet.write(0, col_num, header, header_format)
                 worksheet.set_column(col_num, col_num, 15)
-            
-            row_height = 90
-            col_width_excel = 35  
-            target_px_height = row_height * 1.3  
-            target_px_width = col_width_excel * 7  
-            
+
+            # 🔧 [개선] 사진을 세로로 쌓는 방식 — 행마다 사진 개수에 맞춰 높이를 다르게 자동 조정
+            single_photo_row_height = 90       # 사진 한 장당 차지할 행 높이
+            col_width_excel = 35               # 사진 열 너비(고정)
+            target_px_width = col_width_excel * 7
+            target_px_height_per_img = single_photo_row_height * 1.3
+
             photo_col_idx = headers.index(photo_col_name) if photo_col_name in headers else -1
             if photo_col_idx != -1:
                 worksheet.set_column(photo_col_idx, photo_col_idx, col_width_excel)
-            
-            for row_num, row_data in enumerate(export_df.values):
+
+            MAX_PHOTOS_PER_ROW = 10  # 지나치게 큰 행 방지용 안전장치
+
+            for row_num, (_, row) in enumerate(edited_df.iterrows()):
+                doc_id_val = str(row.get("doc_id", ""))
+                cell_data = row.get(photo_col_name, "") if photo_col_idx != -1 else None
+
+                photo_urls = full_photos_by_id.get(doc_id_val, [])
+                if not photo_urls and cell_data:
+                    # DB에서 못 찾은 경우(예: 저장 전 sample 행)엔 표에 있던 대표사진이라도 사용
+                    single = cell_data[0] if isinstance(cell_data, list) else cell_data
+                    if isinstance(single, str) and single.startswith("http"):
+                        photo_urls = [single]
+                photo_urls = photo_urls[:MAX_PHOTOS_PER_ROW]
+
+                # 사진 개수에 맞춰 이 행의 높이를 동적으로 늘림 (최소 1장 높이는 확보)
+                photo_count = max(len(photo_urls), 1)
+                row_height = single_photo_row_height * photo_count
                 worksheet.set_row(row_num + 1, row_height)
-                
-                for col_num, cell_data in enumerate(row_data):
-                    if col_num == photo_col_idx and cell_data: 
-                        url = cell_data[0] if isinstance(cell_data, list) else str(cell_data)
-                        if url.startswith("http"):
-                            try:
-                                img_res = requests.get(url, timeout=5)
-                                img_data = io.BytesIO(img_res.content)
-                                
-                                image = Image.open(img_data)
-                                orig_width, orig_height = image.size
-                                
-                                scale_x = (target_px_width - 10) / orig_width
-                                scale_y = (target_px_height - 10) / orig_height
-                                optimal_scale = min(scale_x, scale_y)
-                                
-                                worksheet.insert_image(
-                                    row_num + 1, col_num, url, 
-                                    {
-                                        'image_data': img_data, 
-                                        'x_scale': optimal_scale, 
-                                        'y_scale': optimal_scale, 
-                                        'x_offset': 5, 
-                                        'y_offset': 5,
-                                        'object_position': 1
-                                    }
-                                )
-                            except Exception:
-                                worksheet.write(row_num + 1, col_num, "사진 로드 실패", cell_format)
+
+                for col_num, col_name in enumerate(display_order):
+                    val_data = row.get(col_name, "")
+
+                    if col_num == photo_col_idx:
+                        if photo_urls:
+                            for i, url in enumerate(photo_urls):
+                                try:
+                                    img_res = requests.get(url, timeout=5)
+                                    img_data = io.BytesIO(img_res.content)
+                                    image = Image.open(img_data)
+                                    orig_width, orig_height = image.size
+
+                                    scale_x = (target_px_width - 10) / orig_width
+                                    scale_y = (target_px_height_per_img - 10) / orig_height
+                                    optimal_scale = min(scale_x, scale_y)
+
+                                    worksheet.insert_image(
+                                        row_num + 1, col_num, url,
+                                        {
+                                            'image_data': img_data,
+                                            'x_scale': optimal_scale,
+                                            'y_scale': optimal_scale,
+                                            'x_offset': 5,
+                                            'y_offset': 5 + i * target_px_height_per_img,
+                                            'object_position': 1
+                                        }
+                                    )
+                                except Exception:
+                                    worksheet.write(row_num + 1, col_num, "사진 로드 실패", cell_format)
                         else:
                             worksheet.write(row_num + 1, col_num, "", cell_format)
                     else:
-                        val = str(cell_data) if cell_data is not None else ""
+                        val = str(val_data) if val_data is not None else ""
                         worksheet.write(row_num + 1, col_num, val, cell_format)
-            
+
             workbook.close()
             st.session_state.excel_output = output.getvalue()
 
@@ -581,21 +614,21 @@ with col_down2:
 photo_col = next((c for c in col_order if "사진" in c or "URL" in c or "링크" in c), None)
 
 if save_btn:
-    editor_state = st.session_state.get(editor_key, {}) 
+    editor_state = st.session_state.get(editor_key, {})
     has_changes = False
-    
+
     if editor_state.get("edited_rows"):
         for row_idx, changes in editor_state["edited_rows"].items():
             doc_id = df.iloc[int(row_idx)]["doc_id"]
             if "NO" in changes: del changes["NO"]
-            
+
             if photo_col and photo_col in changes and (changes[photo_col] is None or str(changes[photo_col]).strip() == ""):
                 changes[photo_col] = []
-            
+
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
                     changes[k] = str(v)
-                
+
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
                     if not (val_str.startswith("http://") or val_str.startswith("https://")):
@@ -614,26 +647,26 @@ if save_btn:
             else:
                 db.collection("infra_management").document(str(doc_id)).update(changes)
         has_changes = True
-                
+
     if editor_state.get("added_rows"):
         for row in editor_state["added_rows"]:
             row_data = row.copy()
             if "NO" in row_data: del row_data["NO"]
-            
+
             row_data["등록일시"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
             for dc in date_cols:
                 if dc in row_data: row_data[dc] = str(row_data.get(dc, datetime.now().date()))
-            
+
             for k, v in list(row_data.items()):
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
                     if not (val_str.startswith("http://") or val_str.startswith("https://")):
                         row_data[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
-                        
+
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             db.collection("infra_management").add(row_data)
         has_changes = True
-            
+
     if editor_state.get("deleted_rows"):
         for row_idx in editor_state["deleted_rows"]:
             doc_id = df.iloc[int(row_idx)]["doc_id"]
@@ -659,7 +692,7 @@ if save_btn:
                 except Exception:
                     pass
         has_changes = True
-                
+
     if has_changes:
         st.cache_data.clear()
         st.success("🎉 작성하신 모든 내용이 클라우드에 안전하게 일괄 저장되었습니다!")
@@ -674,34 +707,34 @@ st.subheader("📸 모바일 현장 점검 사진 등록")
 
 if photo_col:
     date_col = next((c for c in col_order if "일" in c or "날짜" in c), None)
-    
+
     name_candidates = [c for c in col_order if "명" in c or "이름" in c]
     if name_candidates:
         name_col = name_candidates[0]
     else:
         other_cols = [c for c in col_order if c != date_col]
         name_col = other_cols[0] if other_cols else col_order[0]
-    
+
     facility_options = {}
-    
+
     for idx, row in edited_df.iloc[::-1].iterrows():
         if pd.isna(row['doc_id']) or str(row['doc_id']) == "nan":
             continue
-            
+
         no_val = row.get("NO", "?")
         name_val = row.get(name_col, "이름없음")
         date_val = row.get(date_col, "날짜미상") if date_col else ""
-        
+
         label = f"[NO. {no_val}] {name_val} (점검일: {date_val})"
         facility_options[label] = str(row['doc_id'])
-        
+
     if facility_options:
         selected_label = st.selectbox("사진을 매핑할 시설물을 선택하세요:", list(facility_options.keys()))
         target_doc_id = facility_options[selected_label]
-        
+
         target_doc_ref = db.collection("infra_management").document(target_doc_id)
         doc_snap = target_doc_ref.get()
-        
+
         # 💡 방어 로직: DB에 비정상적인 빈칸 데이터가 섞여 있어도 걸러내어 안전하게 사진만 표시합니다.
         existing_photos = []
         if doc_snap.exists:
@@ -718,25 +751,25 @@ if photo_col:
             for i, img_url in enumerate(existing_photos):
                 with img_cols[i % 5]:
                     st.image(img_url, caption=f"사진 #{i+1}", use_container_width=True)
-            
+
             if st.button("🗑️ 이 항목의 기존 사진 모두 삭제(초기화)", type="secondary"):
                 with st.spinner("사진 링크 제거 중..."):
                     target_doc_ref.update({photo_col: []})
                     st.success("기존 사진 데이터가 완전히 초기화되었습니다.")
                     st.cache_data.clear()
                     st.rerun()
-        
+
         st.markdown(" ")
-        
+
         # 💡 해결 방법: Streamlit 폼(Form)을 사용해 '사진 업로드'와 '찌꺼기 자동 초기화'를 가장 안전하게 수행합니다.
         with st.form(key=f"upload_form_{target_doc_id}", clear_on_submit=True):
             uploaded_files = st.file_uploader(
-                "스마트폰 카메라로 촬영하거나 갤러리에서 사진들을 선택하세요. (여러 장 동시 선택 가능)", 
-                type=["jpg", "jpeg", "png"], 
+                "스마트폰 카메라로 촬영하거나 갤러리에서 사진들을 선택하세요. (여러 장 동시 선택 가능)",
+                type=["jpg", "jpeg", "png"],
                 accept_multiple_files=True
             )
             submit_upload = st.form_submit_button("🚀 선택한 모든 사진 추가 등록", type="primary", use_container_width=True)
-            
+
             if submit_upload:
                 if uploaded_files:
                     with st.spinner("모든 이미지 서버 전송 중..."):
@@ -745,12 +778,12 @@ if photo_col:
                             for idx, uploaded_file in enumerate(uploaded_files):
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                 file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.png"
-                                
+
                                 blob = bucket.blob(file_name)
                                 blob.upload_from_string(uploaded_file.read(), content_type="image/png")
                                 blob.make_public()
                                 new_urls.append(blob.public_url)
-                            
+
                             if target_doc_id.startswith("sample"):
                                 st.warning("먼저 표에 내용을 입력하시고 [일괄 저장]을 누르신 후에 사진을 올려주세요.")
                             else:
