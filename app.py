@@ -11,6 +11,8 @@ import io          # 엑셀 파일 생성용
 import xlsxwriter  # 엑셀 파일 생성 및 이미지 삽입용
 import requests    # 이미지 다운로드용
 from PIL import Image  # 🖼️ 이미지 실제 크기 계산 및 자동 축소용
+from PIL.ExifTags import TAGS, GPSTAGS  # 🔧 사진 GPS 좌표 추출용
+import re  # 🔧 지도 URL에서 좌표 파싱용
 
 # 🏢 페이지 기본 설정
 st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
@@ -143,6 +145,49 @@ components.html(
     """,
     height=0, width=0
 )
+
+# 🔧 [신규] 사진 파일에서 GPS 좌표(위도, 경도) 추출하는 함수
+def extract_gps_from_image(file_bytes):
+    try:
+        image = Image.open(io.BytesIO(file_bytes))
+        exif_data = image._getexif()
+        if not exif_data:
+            return None
+
+        gps_info = {}
+        for tag_id, value in exif_data.items():
+            tag = TAGS.get(tag_id, tag_id)
+            if tag == "GPSInfo":
+                for gps_tag_id, gps_value in value.items():
+                    gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
+                    gps_info[gps_tag] = gps_value
+
+        if not gps_info or "GPSLatitude" not in gps_info or "GPSLongitude" not in gps_info:
+            return None
+
+        def to_decimal(dms, ref):
+            degrees, minutes, seconds = dms
+            decimal = float(degrees) + float(minutes) / 60 + float(seconds) / 3600
+            if ref in ["S", "W"]:
+                decimal = -decimal
+            return decimal
+
+        lat = to_decimal(gps_info["GPSLatitude"], gps_info.get("GPSLatitudeRef", "N"))
+        lng = to_decimal(gps_info["GPSLongitude"], gps_info.get("GPSLongitudeRef", "E"))
+        return (lat, lng)
+    except Exception:
+        return None
+
+
+# 🔧 [신규] 저장된 구글맵 링크(query=위도,경도 형식)에서 좌표만 다시 뽑아내는 함수
+def extract_latlng_from_maps_url(url):
+    if not url:
+        return None
+    match = re.search(r"query=([-\d.]+),([-\d.]+)", str(url))
+    if match:
+        return float(match.group(1)), float(match.group(2))
+    return None
+
 
 def parse_timestamp(ts_str):
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
@@ -775,12 +820,21 @@ if photo_col:
                     with st.spinner("모든 이미지 서버 전송 중..."):
                         try:
                             new_urls = []
+                            detected_latlng = None  # 🔧 여러 장 중 GPS 있는 첫 사진 좌표를 저장
+
                             for idx, uploaded_file in enumerate(uploaded_files):
+                                file_bytes = uploaded_file.read()  # 🔧 바이트를 한 번만 읽어서 재사용
+
+                                if detected_latlng is None:
+                                    gps_result = extract_gps_from_image(file_bytes)
+                                    if gps_result:
+                                        detected_latlng = gps_result
+
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                 file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.png"
 
                                 blob = bucket.blob(file_name)
-                                blob.upload_from_string(uploaded_file.read(), content_type="image/png")
+                                blob.upload_from_string(file_bytes, content_type="image/png")
                                 blob.make_public()
                                 new_urls.append(blob.public_url)
 
@@ -788,8 +842,22 @@ if photo_col:
                                 st.warning("먼저 표에 내용을 입력하시고 [일괄 저장]을 누르신 후에 사진을 올려주세요.")
                             else:
                                 updated_photos = existing_photos + new_urls
-                                target_doc_ref.update({photo_col: updated_photos})
-                                st.success(f"🎉 성공적으로 {len(new_urls)}장의 사진이 대장에 추가 통합되었습니다!")
+                                update_payload = {photo_col: updated_photos}
+
+                                # 🔧 GPS 좌표를 찾았고, 위치 칸이 비어있으면 자동으로 채움
+                                location_col = next((c for c in col_order if "위치" in c or "지도" in c), None)
+                                if detected_latlng and location_col:
+                                    current_loc = doc_snap.to_dict().get(location_col, "") if doc_snap.exists else ""
+                                    if not str(current_loc).strip():
+                                        lat, lng = detected_latlng
+                                        update_payload[location_col] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+
+                                target_doc_ref.update(update_payload)
+
+                                if detected_latlng and location_col:
+                                    st.success(f"🎉 {len(new_urls)}장의 사진이 추가되었고, 사진 속 GPS 좌표로 위치도 자동 등록되었습니다!")
+                                else:
+                                    st.success(f"🎉 성공적으로 {len(new_urls)}장의 사진이 대장에 추가 통합되었습니다!")
                                 st.cache_data.clear()
                                 st.rerun()
                         except Exception as e:
@@ -800,3 +868,34 @@ if photo_col:
         st.info("등록 가능한 시설물이 없습니다. 위의 표에 데이터를 먼저 입력해주세요.")
 else:
     st.warning("이름에 '사진', 'URL', '링크' 중 하나가 포함된 항목(열)이 있어야 사진을 매핑할 수 있습니다.")
+
+st.markdown("---")
+st.subheader("🗺️ 시설물 위치 지도 확인")
+
+location_col_for_map = next((c for c in col_order if "위치" in c or "지도" in c), None)
+
+if location_col_for_map and photo_col and 'facility_options' in dir() and facility_options:
+    map_facility_label = st.selectbox(
+        "지도를 확인할 시설물을 선택하세요:",
+        list(facility_options.keys()),
+        key="map_facility_select"
+    )
+    map_doc_id = facility_options[map_facility_label]
+    map_doc_snap = db.collection("infra_management").document(map_doc_id).get()
+
+    if map_doc_snap.exists:
+        saved_url = map_doc_snap.to_dict().get(location_col_for_map, "")
+        latlng = extract_latlng_from_maps_url(saved_url)
+
+        if latlng:
+            lat, lng = latlng
+            zoom_level = st.slider("확대 수준", min_value=10, max_value=20, value=17, key="map_zoom")
+            embed_url = f"https://www.google.com/maps?q={lat},{lng}&z={zoom_level}&output=embed"
+            components.iframe(embed_url, height=450)
+            st.caption(f"📍 좌표: {lat:.6f}, {lng:.6f}")
+        else:
+            st.info("이 시설물은 아직 좌표(위치)가 등록되지 않았습니다. GPS 정보가 있는 사진을 업로드하면 자동으로 채워집니다.")
+elif location_col_for_map:
+    st.info("등록된 시설물이 없습니다. 위의 표에 데이터를 먼저 입력해주세요.")
+else:
+    st.warning("이름에 '위치' 또는 '지도'가 포함된 항목(열)이 있어야 지도를 표시할 수 있습니다.")
