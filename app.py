@@ -146,24 +146,39 @@ components.html(
     height=0, width=0
 )
 
-# 🔧 [신규] 사진 파일에서 GPS 좌표(위도, 경도) 추출하는 함수
+# 🔧 사진 파일에서 GPS 좌표(위도, 경도) 추출하는 함수 (최신/구버전 방식 둘 다 시도 + 실패 사유 반환)
 def extract_gps_from_image(file_bytes):
     try:
         image = Image.open(io.BytesIO(file_bytes))
-        exif_data = image._getexif()
-        if not exif_data:
-            return None
 
-        gps_info = {}
-        for tag_id, value in exif_data.items():
-            tag = TAGS.get(tag_id, tag_id)
-            if tag == "GPSInfo":
-                for gps_tag_id, gps_value in value.items():
-                    gps_tag = GPSTAGS.get(gps_tag_id, gps_tag_id)
-                    gps_info[gps_tag] = gps_value
+        gps_ifd = None
 
-        if not gps_info or "GPSLatitude" not in gps_info or "GPSLongitude" not in gps_info:
-            return None
+        # 방법 1: 최신 Pillow 권장 방식 (getexif + GPS 전용 IFD)
+        try:
+            exif = image.getexif()
+            gps_ifd = exif.get_ifd(0x8825) or None
+        except Exception:
+            gps_ifd = None
+
+        # 방법 2: 방법 1이 실패하면 구버전 호환 방식으로 재시도
+        if not gps_ifd:
+            try:
+                legacy_exif = image._getexif()
+                if legacy_exif:
+                    for tag_id, value in legacy_exif.items():
+                        if TAGS.get(tag_id, tag_id) == "GPSInfo":
+                            gps_ifd = value
+                            break
+            except Exception:
+                pass
+
+        if not gps_ifd:
+            return None, "이 사진에서 EXIF/GPS 데이터를 찾을 수 없습니다 (촬영 시 위치 서비스가 꺼져 있었거나, 전송 과정에서 메타데이터가 삭제됐을 수 있습니다)"
+
+        gps_info = {GPSTAGS.get(k, k): v for k, v in gps_ifd.items()}
+
+        if "GPSLatitude" not in gps_info or "GPSLongitude" not in gps_info:
+            return None, "GPS 태그는 있지만 위도/경도 값이 없습니다"
 
         def to_decimal(dms, ref):
             degrees, minutes, seconds = dms
@@ -174,9 +189,9 @@ def extract_gps_from_image(file_bytes):
 
         lat = to_decimal(gps_info["GPSLatitude"], gps_info.get("GPSLatitudeRef", "N"))
         lng = to_decimal(gps_info["GPSLongitude"], gps_info.get("GPSLongitudeRef", "E"))
-        return (lat, lng)
-    except Exception:
-        return None
+        return (lat, lng), "성공"
+    except Exception as e:
+        return None, f"이미지 처리 중 오류: {e}"
 
 
 # 🔧 [신규] 저장된 구글맵 링크(query=위도,경도 형식)에서 좌표만 다시 뽑아내는 함수
@@ -750,6 +765,25 @@ st.markdown("---")
 # 5. 모바일 현장 사진 업로드 (💡 에러 및 잔상 완벽 해결 버전)
 st.subheader("📸 모바일 현장 점검 사진 등록")
 
+# 🔧 직전 업로드의 GPS 자동인식 결과를 rerun 이후에도 보여줌
+if "gps_upload_result" in st.session_state:
+    result = st.session_state.pop("gps_upload_result")
+    count = result["count"]
+    status = result["status"]
+    reasons = result["reasons"]
+
+    if status == "applied":
+        st.success(f"🎉 {count}장의 사진이 추가되었고, 사진 속 GPS 좌표로 위치도 자동 등록되었습니다!")
+    elif status == "already_filled":
+        st.success(f"🎉 {count}장의 사진이 추가되었습니다. (위치 칸에 이미 값이 있어 GPS로 덮어쓰지 않았습니다)")
+    elif status == "no_gps":
+        st.success(f"🎉 {count}장의 사진이 추가되었습니다.")
+        with st.expander("ℹ️ 위치 칸이 자동으로 안 채워진 이유", expanded=True):
+            for i, reason in enumerate(reasons):
+                st.write(f"- 사진 {i+1}: {reason}")
+    else:
+        st.success(f"🎉 성공적으로 {count}장의 사진이 대장에 추가 통합되었습니다!")
+
 if photo_col:
     date_col = next((c for c in col_order if "일" in c or "날짜" in c), None)
 
@@ -821,14 +855,15 @@ if photo_col:
                         try:
                             new_urls = []
                             detected_latlng = None  # 🔧 여러 장 중 GPS 있는 첫 사진 좌표를 저장
+                            gps_reasons = []  # 🔧 진단용: 각 사진의 GPS 추출 결과 사유
 
                             for idx, uploaded_file in enumerate(uploaded_files):
                                 file_bytes = uploaded_file.read()  # 🔧 바이트를 한 번만 읽어서 재사용
 
-                                if detected_latlng is None:
-                                    gps_result = extract_gps_from_image(file_bytes)
-                                    if gps_result:
-                                        detected_latlng = gps_result
+                                gps_result, gps_reason = extract_gps_from_image(file_bytes)
+                                gps_reasons.append(gps_reason)
+                                if detected_latlng is None and gps_result:
+                                    detected_latlng = gps_result
 
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                 file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.png"
@@ -846,18 +881,26 @@ if photo_col:
 
                                 # 🔧 GPS 좌표를 찾았고, 위치 칸이 비어있으면 자동으로 채움
                                 location_col = next((c for c in col_order if "위치" in c or "지도" in c), None)
-                                if detected_latlng and location_col:
+                                location_status = "no_gps"  # no_gps / already_filled / applied / no_column
+                                if not location_col:
+                                    location_status = "no_column"
+                                elif detected_latlng:
                                     current_loc = doc_snap.to_dict().get(location_col, "") if doc_snap.exists else ""
-                                    if not str(current_loc).strip():
+                                    if str(current_loc).strip():
+                                        location_status = "already_filled"
+                                    else:
                                         lat, lng = detected_latlng
                                         update_payload[location_col] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                                        location_status = "applied"
 
                                 target_doc_ref.update(update_payload)
 
-                                if detected_latlng and location_col:
-                                    st.success(f"🎉 {len(new_urls)}장의 사진이 추가되었고, 사진 속 GPS 좌표로 위치도 자동 등록되었습니다!")
-                                else:
-                                    st.success(f"🎉 성공적으로 {len(new_urls)}장의 사진이 대장에 추가 통합되었습니다!")
+                                # 🔧 rerun 직전 메시지가 바로 사라지는 문제 방지: session_state에 저장해뒀다가 재실행 후 표시
+                                st.session_state["gps_upload_result"] = {
+                                    "count": len(new_urls),
+                                    "status": location_status,
+                                    "reasons": gps_reasons,
+                                }
                                 st.cache_data.clear()
                                 st.rerun()
                         except Exception as e:
