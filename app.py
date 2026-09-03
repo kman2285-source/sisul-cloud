@@ -847,6 +847,7 @@ if photo_col:
                 type=["jpg", "jpeg", "png"],
                 accept_multiple_files=True
             )
+            overwrite_gps = st.checkbox("📍 위치 칸에 이미 값이 있어도 새 사진의 GPS 좌표로 덮어쓰기", value=False)
             submit_upload = st.form_submit_button("🚀 선택한 모든 사진 추가 등록", type="primary", use_container_width=True)
 
             if submit_upload:
@@ -879,14 +880,14 @@ if photo_col:
                                 updated_photos = existing_photos + new_urls
                                 update_payload = {photo_col: updated_photos}
 
-                                # 🔧 GPS 좌표를 찾았고, 위치 칸이 비어있으면 자동으로 채움
+                                # 🔧 GPS 좌표를 찾았고, 위치 칸이 비어있거나 덮어쓰기를 선택했으면 자동으로 채움
                                 location_col = next((c for c in col_order if "위치" in c or "지도" in c), None)
                                 location_status = "no_gps"  # no_gps / already_filled / applied / no_column
                                 if not location_col:
                                     location_status = "no_column"
                                 elif detected_latlng:
                                     current_loc = doc_snap.to_dict().get(location_col, "") if doc_snap.exists else ""
-                                    if str(current_loc).strip():
+                                    if str(current_loc).strip() and not overwrite_gps:
                                         location_status = "already_filled"
                                     else:
                                         lat, lng = detected_latlng
