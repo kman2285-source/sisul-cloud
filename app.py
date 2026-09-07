@@ -198,7 +198,13 @@ def extract_gps_from_image(file_bytes):
 def extract_latlng_from_maps_url(url):
     if not url:
         return None
-    match = re.search(r"query=([-\d.]+),([-\d.]+)", str(url))
+    text = str(url).strip()
+    # 1) 이 앱이 저장해둔 구글맵 검색 링크 형식
+    match = re.search(r"query=([-\d.]+)\s*,\s*([-\d.]+)", text)
+    if match:
+        return float(match.group(1)), float(match.group(2))
+    # 2) 카카오맵/네이버지도 등에서 복사한 "위도, 경도" 순수 텍스트 형식
+    match = re.match(r"^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$", text)
     if match:
         return float(match.group(1)), float(match.group(2))
     return None
@@ -917,6 +923,7 @@ st.markdown("---")
 st.subheader("🗺️ 시설물 위치 지도 확인")
 
 location_col_for_map = next((c for c in col_order if "위치" in c or "지도" in c), None)
+KAKAO_JS_KEY = st.secrets.get("KAKAO_JS_KEY", "")
 
 if location_col_for_map and photo_col and 'facility_options' in dir() and facility_options:
     map_facility_label = st.selectbox(
@@ -925,20 +932,63 @@ if location_col_for_map and photo_col and 'facility_options' in dir() and facili
         key="map_facility_select"
     )
     map_doc_id = facility_options[map_facility_label]
-    map_doc_snap = db.collection("infra_management").document(map_doc_id).get()
+    map_doc_ref = db.collection("infra_management").document(map_doc_id)
+    map_doc_snap = map_doc_ref.get()
 
     if map_doc_snap.exists:
         saved_url = map_doc_snap.to_dict().get(location_col_for_map, "")
         latlng = extract_latlng_from_maps_url(saved_url)
 
-        if latlng:
+        if latlng and KAKAO_JS_KEY:
             lat, lng = latlng
-            zoom_level = st.slider("확대 수준", min_value=10, max_value=20, value=17, key="map_zoom")
-            embed_url = f"https://www.google.com/maps?q={lat},{lng}&z={zoom_level}&output=embed"
-            components.iframe(embed_url, height=450)
+            zoom_level = st.slider("확대 수준 (숫자가 작을수록 확대됨)", min_value=1, max_value=10, value=3, key="map_zoom")
+            kakao_map_html = f"""
+            <div id="kakaoMap" style="width:100%;height:450px;"></div>
+            <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}"></script>
+            <script>
+                var container = document.getElementById('kakaoMap');
+                var options = {{
+                    center: new kakao.maps.LatLng({lat}, {lng}),
+                    level: {zoom_level}
+                }};
+                var map = new kakao.maps.Map(container, options);
+                var markerPosition = new kakao.maps.LatLng({lat}, {lng});
+                var marker = new kakao.maps.Marker({{ position: markerPosition }});
+                marker.setMap(map);
+            </script>
+            """
+            components.html(kakao_map_html, height=470)
             st.caption(f"📍 좌표: {lat:.6f}, {lng:.6f}")
+        elif latlng and not KAKAO_JS_KEY:
+            st.warning("⚠️ 좌표는 있지만, Streamlit Secrets에 KAKAO_JS_KEY가 등록되지 않아 지도를 표시할 수 없습니다.")
+            st.caption(f"📍 좌표: {latlng[0]:.6f}, {latlng[1]:.6f}")
         else:
-            st.info("이 시설물은 아직 좌표(위치)가 등록되지 않았습니다. GPS 정보가 있는 사진을 업로드하면 자동으로 채워집니다.")
+            st.info("이 시설물은 아직 좌표(위치)가 등록되지 않았습니다.")
+
+        st.markdown(" ")
+        with st.expander("✏️ 좌표 직접 입력 / 수정 (카카오맵·네이버지도에서 복사해오기)", expanded=(latlng is None)):
+            st.caption(
+                "💡 카카오맵 앱이나 네이버지도 앱에서 해당 위치를 길게 눌러 '좌표 복사'를 누르면 "
+                "\"위도, 경도\" 형식의 텍스트가 복사됩니다. 그걸 그대로 아래에 붙여넣으세요."
+            )
+            st.link_button("🗺️ 카카오맵에서 위치 검색하기 (새 탭)", "https://map.kakao.com/")
+
+            pasted_coord = st.text_input(
+                "좌표 붙여넣기 (예: 35.857350, 128.601470)",
+                key=f"paste_coord_{map_doc_id}"
+            )
+            if st.button("💾 이 좌표로 저장", key=f"save_coord_{map_doc_id}"):
+                parsed = extract_latlng_from_maps_url(pasted_coord)
+                if parsed:
+                    p_lat, p_lng = parsed
+                    map_doc_ref.update({
+                        location_col_for_map: f"https://www.google.com/maps/search/?api=1&query={p_lat},{p_lng}"
+                    })
+                    st.success("🎉 좌표가 저장되었습니다!")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.error("좌표 형식을 인식하지 못했습니다. \"위도, 경도\" 형식인지 확인해주세요.")
 elif location_col_for_map:
     st.info("등록된 시설물이 없습니다. 위의 표에 데이터를 먼저 입력해주세요.")
 else:
