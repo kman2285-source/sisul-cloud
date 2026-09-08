@@ -658,7 +658,9 @@ with col_down2:
             if photo_col_idx != -1:
                 worksheet.set_column(photo_col_idx, photo_col_idx, col_width_excel)
 
-            MAX_PHOTOS_PER_ROW = 10  # 지나치게 큰 행 방지용 안전장치
+            MAX_PHOTOS_PER_ROW = 5      # 지나치게 큰 행 방지용 안전장치 (기존 10 → 5로 축소)
+            TOTAL_PHOTO_CAP = 400       # 🔧 [신규] 전체 엑셀 기준 삽입 사진 총량 상한 (메모리 폭주 방지)
+            total_inserted = 0
 
             for row_num, (_, row) in enumerate(edited_df.iterrows()):
                 doc_id_val = str(row.get("doc_id", ""))
@@ -675,7 +677,7 @@ with col_down2:
                 # 사진 개수에 맞춰 이 행의 높이를 동적으로 늘림 (최소 1장 높이는 확보)
                 photo_count = max(len(photo_urls), 1)
                 row_height = single_photo_row_height * photo_count
-                worksheet.set_row(row_num + 1, row_height)
+                worksheet.set_row(row_num + 1, min(row_height, 400))  # 엑셀 행 높이 상한(409pt) 안전 마진
 
                 for col_num, col_name in enumerate(display_order):
                     val_data = row.get(col_name, "")
@@ -683,20 +685,33 @@ with col_down2:
                     if col_num == photo_col_idx:
                         if photo_urls:
                             for i, url in enumerate(photo_urls):
+                                if total_inserted >= TOTAL_PHOTO_CAP:
+                                    worksheet.write(row_num + 1, col_num, f"(사진 {len(photo_urls)}장, 용량 제한으로 일부 생략)", cell_format)
+                                    break
                                 try:
-                                    img_res = requests.get(url, timeout=5)
-                                    img_data = io.BytesIO(img_res.content)
-                                    image = Image.open(img_data)
-                                    orig_width, orig_height = image.size
+                                    img_res = requests.get(url, timeout=8)
+                                    image = Image.open(io.BytesIO(img_res.content))
+                                    if image.mode != "RGB":
+                                        image = image.convert("RGB")
 
-                                    scale_x = (target_px_width - 10) / orig_width
-                                    scale_y = (target_px_height_per_img - 10) / orig_height
-                                    optimal_scale = min(scale_x, scale_y)
+                                    # 🔧 [개선] 삽입 전에 실제 픽셀 크기와 용량 자체를 확 줄임 (메모리/파일크기 절감 핵심)
+                                    max_dim = int(target_px_width * 2)
+                                    if max(image.size) > max_dim:
+                                        image.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
+                                    resized_width, resized_height = image.size
+                                    compressed_buf = io.BytesIO()
+                                    image.save(compressed_buf, format="JPEG", quality=70)
+                                    compressed_buf.seek(0)
+
+                                    scale_x = (target_px_width - 10) / resized_width
+                                    scale_y = (target_px_height_per_img - 10) / resized_height
+                                    optimal_scale = min(scale_x, scale_y, 1.0)
 
                                     worksheet.insert_image(
                                         row_num + 1, col_num, url,
                                         {
-                                            'image_data': img_data,
+                                            'image_data': compressed_buf,
                                             'x_scale': optimal_scale,
                                             'y_scale': optimal_scale,
                                             'x_offset': 5,
@@ -704,6 +719,7 @@ with col_down2:
                                             'object_position': 1
                                         }
                                     )
+                                    total_inserted += 1
                                 except Exception:
                                     worksheet.write(row_num + 1, col_num, "사진 로드 실패", cell_format)
                         else:
