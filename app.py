@@ -982,7 +982,6 @@ st.markdown("---")
 st.subheader("🗺️ 시설물 위치 지도 확인")
 
 location_col_for_map = next((c for c in col_order if "위치" in c or "지도" in c), None)
-KAKAO_JS_KEY = st.secrets.get("KAKAO_JS_KEY", "")
 
 if location_col_for_map and photo_col and 'facility_options' in dir() and facility_options:
     map_facility_label = st.selectbox(
@@ -998,29 +997,13 @@ if location_col_for_map and photo_col and 'facility_options' in dir() and facili
         saved_url = map_doc_snap.to_dict().get(location_col_for_map, "")
         latlng = extract_latlng_from_maps_url(saved_url)
 
-        if latlng and KAKAO_JS_KEY:
+        if latlng:
             lat, lng = latlng
-            zoom_level = st.slider("확대 수준 (숫자가 작을수록 확대됨)", min_value=1, max_value=10, value=3, key="map_zoom")
-            kakao_map_html = f"""
-            <div id="kakaoMap" style="width:100%;height:450px;"></div>
-            <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}"></script>
-            <script>
-                var container = document.getElementById('kakaoMap');
-                var options = {{
-                    center: new kakao.maps.LatLng({lat}, {lng}),
-                    level: {zoom_level}
-                }};
-                var map = new kakao.maps.Map(container, options);
-                var markerPosition = new kakao.maps.LatLng({lat}, {lng});
-                var marker = new kakao.maps.Marker({{ position: markerPosition }});
-                marker.setMap(map);
-            </script>
-            """
-            components.html(kakao_map_html, height=470)
             st.caption(f"📍 좌표: {lat:.6f}, {lng:.6f}")
-        elif latlng and not KAKAO_JS_KEY:
-            st.warning("⚠️ 좌표는 있지만, Streamlit Secrets에 KAKAO_JS_KEY가 등록되지 않아 지도를 표시할 수 없습니다.")
-            st.caption(f"📍 좌표: {latlng[0]:.6f}, {latlng[1]:.6f}")
+            st.link_button("🗺️ 카카오맵에서 이 위치 보기 (새 탭)", build_kakao_link(lat, lng), use_container_width=True)
+        elif saved_url:
+            st.caption("📍 이름/주소로 등록된 위치입니다 (정확한 좌표 없음)")
+            st.link_button("🗺️ 카카오맵에서 검색 결과 보기 (새 탭)", saved_url, use_container_width=True)
         else:
             st.info("이 시설물은 아직 좌표(위치)가 등록되지 않았습니다.")
 
