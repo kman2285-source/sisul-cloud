@@ -5,3 +5,4 @@ streamlit-oauth
 xlsxwriter
 requests
 Pillow
+streamlit-cookies-manager
