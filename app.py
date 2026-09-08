@@ -1059,8 +1059,9 @@ st.markdown("---")
 with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", expanded=False):
     st.caption(
         "현재 등록된 전체 점검 기록을 기준으로 매번 새로 계산됩니다. "
-        "점검내용·점검결과 텍스트 안의 키워드와 반복 패턴을 통계적으로 집계하는 방식이라, "
-        "데이터가 늘어나거나 바뀌어도 자동으로 최신 상태를 반영합니다."
+        "**점검결과 칸에 실제로 적힌 내용만** 대상으로 문제 키워드를 찾습니다 "
+        "(점검내용 칸은 점검하게 된 사유일 뿐이라 제외하고, 점검결과가 비어있거나 점검내용과 똑같이 반복된 경우도 "
+        "'특이사항 없음'으로 보고 제외합니다)."
     )
 
     content_col = next((c for c in col_order if "내용" in c), None)
@@ -1070,11 +1071,11 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     area_col = next((c for c in col_order if "지역" in c or "하천" in c), None)
 
     analysis_df = edited_df.copy()
-    analysis_df["__결합텍스트"] = ""
-    if content_col and content_col in analysis_df.columns:
-        analysis_df["__결합텍스트"] += analysis_df[content_col].fillna("").astype(str) + " "
-    if result_col and result_col in analysis_df.columns:
-        analysis_df["__결합텍스트"] += analysis_df[result_col].fillna("").astype(str)
+    content_text = analysis_df[content_col].fillna("").astype(str).str.strip() if content_col and content_col in analysis_df.columns else pd.Series([""] * len(analysis_df), index=analysis_df.index)
+    result_text = analysis_df[result_col].fillna("").astype(str).str.strip() if result_col and result_col in analysis_df.columns else pd.Series([""] * len(analysis_df), index=analysis_df.index)
+
+    # 🔧 점검결과가 비어있거나, 점검내용을 그대로 복사/반복한 경우는 '실제 발견 사항 없음'으로 간주해 제외
+    analysis_df["__유효결과"] = result_text.where((result_text != "") & (result_text != content_text), "")
 
     PROBLEM_KEYWORDS = [
         "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
@@ -1084,35 +1085,37 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.markdown("**① 문제 키워드 빈도**")
+        st.markdown("**① 문제 키워드 빈도 (점검결과 기준)**")
         kw_counts = {}
         for kw in PROBLEM_KEYWORDS:
-            cnt = int(analysis_df["__결합텍스트"].str.contains(kw, na=False, regex=False).sum())
+            cnt = int(analysis_df["__유효결과"].str.contains(kw, na=False, regex=False).sum())
             if cnt > 0:
                 kw_counts[kw] = cnt
         if kw_counts:
             kw_df = pd.DataFrame(sorted(kw_counts.items(), key=lambda x: -x[1]), columns=["키워드", "건수"])
             st.dataframe(kw_df, hide_index=True, use_container_width=True)
         else:
-            st.info("아직 문제 키워드가 감지된 기록이 없습니다.")
+            st.info("아직 점검결과에 문제 키워드가 감지된 기록이 없습니다.")
 
     with col_b:
-        st.markdown("**② 반복 점검된 시설물 (2회 이상)**")
-        if name_col_analysis and name_col_analysis in analysis_df.columns:
-            repeat_counts = analysis_df[name_col_analysis].value_counts()
+        st.markdown("**② 반복해서 문제가 확인된 시설물 (2회 이상)**")
+        if name_col_analysis and name_col_analysis in analysis_df.columns and PROBLEM_KEYWORDS:
+            problem_pattern = "|".join(PROBLEM_KEYWORDS)
+            has_problem = analysis_df["__유효결과"].str.contains(problem_pattern, na=False, regex=True)
+            repeat_counts = analysis_df.loc[has_problem, name_col_analysis].value_counts()
             repeat_counts = repeat_counts[(repeat_counts.index != "") & (repeat_counts >= 2)]
             if len(repeat_counts) > 0:
-                repeat_df = repeat_counts.rename("점검 횟수").reset_index().rename(columns={"index": name_col_analysis})
+                repeat_df = repeat_counts.rename("문제 확인 횟수").reset_index().rename(columns={"index": name_col_analysis})
                 st.dataframe(repeat_df, hide_index=True, use_container_width=True)
             else:
-                st.info("2회 이상 반복 점검된 시설물이 아직 없습니다.")
+                st.info("점검결과 기준으로 2회 이상 반복 확인된 문제 시설물이 아직 없습니다.")
         else:
             st.info("시설명 항목을 찾을 수 없습니다.")
 
-    st.markdown("**③ 문제 다발 지역**")
+    st.markdown("**③ 문제 다발 지역 (점검결과 기준)**")
     if PROBLEM_KEYWORDS:
         problem_pattern = "|".join(PROBLEM_KEYWORDS)
-        problem_mask = analysis_df["__결합텍스트"].str.contains(problem_pattern, na=False, regex=True)
+        problem_mask = analysis_df["__유효결과"].str.contains(problem_pattern, na=False, regex=True)
         problem_rows = analysis_df[problem_mask]
 
         region_col = biz_col or area_col
@@ -1122,10 +1125,10 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             if len(region_counts) > 0:
                 st.bar_chart(region_counts)
                 top_region = region_counts.idxmax()
-                st.caption(f"💡 문제 관련 기록이 가장 많이 몰린 곳: **{top_region}** ({int(region_counts.max())}건)")
+                st.caption(f"💡 실제 문제가 확인된 기록이 가장 많이 몰린 곳: **{top_region}** ({int(region_counts.max())}건)")
             else:
                 st.info("지역별로 집계할 문제 기록이 아직 없습니다.")
         else:
-            st.info("사업처/지역 항목을 찾을 수 없거나, 아직 문제로 분류된 기록이 없습니다.")
+            st.info("사업처/지역 항목을 찾을 수 없거나, 점검결과 기준으로 문제로 분류된 기록이 없습니다.")
 
     st.caption("⚠️ 이 분석은 단순 키워드 매칭 기반이라 참고용입니다 — 실제 조치 여부나 심각도는 담당자 확인이 필요합니다.")
