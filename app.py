@@ -659,7 +659,7 @@ with col_down2:
                 worksheet.set_column(photo_col_idx, photo_col_idx, col_width_excel)
 
             MAX_PHOTOS_PER_ROW = 5      # 지나치게 큰 행 방지용 안전장치 (기존 10 → 5로 축소)
-            TOTAL_PHOTO_CAP = 400       # 🔧 [신규] 전체 엑셀 기준 삽입 사진 총량 상한 (메모리 폭주 방지)
+            TOTAL_PHOTO_CAP = 1200      # 🔧 압축 적용 후 여유 있게 상향 (기존 400 → 1200)
             total_inserted = 0
 
             for row_num, (_, row) in enumerate(edited_df.iterrows()):
@@ -701,7 +701,7 @@ with col_down2:
 
                                     resized_width, resized_height = image.size
                                     compressed_buf = io.BytesIO()
-                                    image.save(compressed_buf, format="JPEG", quality=70)
+                                    image.save(compressed_buf, format="JPEG", quality=60)
                                     compressed_buf.seek(0)
 
                                     scale_x = (target_px_width - 10) / resized_width
@@ -1051,3 +1051,81 @@ elif location_col_for_map:
     st.info("등록된 시설물이 없습니다. 위의 표에 데이터를 먼저 입력해주세요.")
 else:
     st.warning("이름에 '위치' 또는 '지도'가 포함된 항목(열)이 있어야 지도를 표시할 수 있습니다.")
+
+# ==========================================================
+# 🚨 [신규] 반복 문제 및 예방 안전활동 분석 (규칙 기반 자동 분석 — 별도 AI 호출 없음)
+# ==========================================================
+st.markdown("---")
+with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", expanded=False):
+    st.caption(
+        "현재 등록된 전체 점검 기록을 기준으로 매번 새로 계산됩니다. "
+        "점검내용·점검결과 텍스트 안의 키워드와 반복 패턴을 통계적으로 집계하는 방식이라, "
+        "데이터가 늘어나거나 바뀌어도 자동으로 최신 상태를 반영합니다."
+    )
+
+    content_col = next((c for c in col_order if "내용" in c), None)
+    result_col = next((c for c in col_order if "결과" in c), None)
+    name_col_analysis = next((c for c in col_order if "명" in c or "이름" in c), None)
+    biz_col = next((c for c in col_order if "사업처" in c), None)
+    area_col = next((c for c in col_order if "지역" in c or "하천" in c), None)
+
+    analysis_df = edited_df.copy()
+    analysis_df["__결합텍스트"] = ""
+    if content_col and content_col in analysis_df.columns:
+        analysis_df["__결합텍스트"] += analysis_df[content_col].fillna("").astype(str) + " "
+    if result_col and result_col in analysis_df.columns:
+        analysis_df["__결합텍스트"] += analysis_df[result_col].fillna("").astype(str)
+
+    PROBLEM_KEYWORDS = [
+        "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
+        "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수"
+    ]
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.markdown("**① 문제 키워드 빈도**")
+        kw_counts = {}
+        for kw in PROBLEM_KEYWORDS:
+            cnt = int(analysis_df["__결합텍스트"].str.contains(kw, na=False, regex=False).sum())
+            if cnt > 0:
+                kw_counts[kw] = cnt
+        if kw_counts:
+            kw_df = pd.DataFrame(sorted(kw_counts.items(), key=lambda x: -x[1]), columns=["키워드", "건수"])
+            st.dataframe(kw_df, hide_index=True, use_container_width=True)
+        else:
+            st.info("아직 문제 키워드가 감지된 기록이 없습니다.")
+
+    with col_b:
+        st.markdown("**② 반복 점검된 시설물 (2회 이상)**")
+        if name_col_analysis and name_col_analysis in analysis_df.columns:
+            repeat_counts = analysis_df[name_col_analysis].value_counts()
+            repeat_counts = repeat_counts[(repeat_counts.index != "") & (repeat_counts >= 2)]
+            if len(repeat_counts) > 0:
+                repeat_df = repeat_counts.rename("점검 횟수").reset_index().rename(columns={"index": name_col_analysis})
+                st.dataframe(repeat_df, hide_index=True, use_container_width=True)
+            else:
+                st.info("2회 이상 반복 점검된 시설물이 아직 없습니다.")
+        else:
+            st.info("시설명 항목을 찾을 수 없습니다.")
+
+    st.markdown("**③ 문제 다발 지역**")
+    if PROBLEM_KEYWORDS:
+        problem_pattern = "|".join(PROBLEM_KEYWORDS)
+        problem_mask = analysis_df["__결합텍스트"].str.contains(problem_pattern, na=False, regex=True)
+        problem_rows = analysis_df[problem_mask]
+
+        region_col = biz_col or area_col
+        if region_col and region_col in problem_rows.columns and len(problem_rows) > 0:
+            region_counts = problem_rows[region_col].value_counts()
+            region_counts = region_counts[region_counts.index != ""]
+            if len(region_counts) > 0:
+                st.bar_chart(region_counts)
+                top_region = region_counts.idxmax()
+                st.caption(f"💡 문제 관련 기록이 가장 많이 몰린 곳: **{top_region}** ({int(region_counts.max())}건)")
+            else:
+                st.info("지역별로 집계할 문제 기록이 아직 없습니다.")
+        else:
+            st.info("사업처/지역 항목을 찾을 수 없거나, 아직 문제로 분류된 기록이 없습니다.")
+
+    st.caption("⚠️ 이 분석은 단순 키워드 매칭 기반이라 참고용입니다 — 실제 조치 여부나 심각도는 담당자 확인이 필요합니다.")
