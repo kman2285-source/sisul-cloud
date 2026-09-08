@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import base64  # 🔐 구글 ID 토큰 해독용
 from streamlit_oauth import OAuth2Component  # 🔐 구글 OAuth 로그인용
+from streamlit_cookies_manager import EncryptedCookieManager  # 🔐 30일 로그인 유지용 쿠키
 import io          # 엑셀 파일 생성용
 import xlsxwriter  # 엑셀 파일 생성 및 이미지 삽입용
 import requests    # 이미지 다운로드용
@@ -23,6 +24,14 @@ if "table_version" not in st.session_state:
     st.session_state.table_version = 0
 
 # ---------------------------------------------------------
+# 🍪 [신규] 30일 로그인 유지용 쿠키 매니저 초기화
+COOKIE_PASSWORD = st.secrets.get("COOKIE_PASSWORD", "sisul2026-default-cookie-key")
+cookies = EncryptedCookieManager(prefix="sisul2026_auth/", password=COOKIE_PASSWORD)
+if not cookies.ready():
+    st.stop()
+
+LOGIN_PERSIST_DAYS = 30
+
 # 🛡️ [보안 강화] 이중 보안 시스템: 1차 구글 로그인 + 2차 비밀번호 인증
 if "google_auth" not in st.session_state:
     st.session_state.google_auth = False
@@ -30,6 +39,19 @@ if "pw_auth" not in st.session_state:
     st.session_state.pw_auth = False
 if "user_email" not in st.session_state:
     st.session_state.user_email = ""
+
+# 🍪 [신규] 세션이 새로 시작됐어도, 쿠키에 유효한 로그인 기록이 있으면 자동으로 복원
+if not (st.session_state.google_auth and st.session_state.pw_auth):
+    saved_expiry = cookies.get("auth_expiry")
+    if saved_expiry:
+        try:
+            expiry_dt = datetime.fromisoformat(saved_expiry)
+            if expiry_dt > datetime.now():
+                st.session_state.google_auth = True
+                st.session_state.pw_auth = True
+                st.session_state.user_email = cookies.get("user_email", "")
+        except Exception:
+            pass
 
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
@@ -97,9 +119,18 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
 
             with st.form("pw_form"):
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
+                keep_logged_in = st.checkbox(f"이 브라우저에서 {LOGIN_PERSIST_DAYS}일간 로그인 유지", value=True)
                 if st.form_submit_button("최종 웹 접속하기", use_container_width=True):
                     if password == "sisul123!":
                         st.session_state.pw_auth = True
+
+                        # 🍪 [신규] 로그인 유지 체크 시 쿠키에 30일짜리 인증 정보 저장
+                        if keep_logged_in:
+                            expiry = (datetime.now() + timedelta(days=LOGIN_PERSIST_DAYS)).isoformat()
+                            cookies["auth_expiry"] = expiry
+                            cookies["user_email"] = st.session_state.user_email
+                            cookies.save()
+
                         st.success("✅ 이중 인증 완료! 잠시 후 화면을 불러옵니다...")
                         st.rerun()
                     else:
@@ -252,6 +283,10 @@ with st.sidebar:
         st.session_state.google_auth = False
         st.session_state.pw_auth = False
         st.session_state.user_email = ""
+        # 🍪 [신규] 로그아웃 시 30일 유지 쿠키도 함께 삭제
+        cookies["auth_expiry"] = ""
+        cookies["user_email"] = ""
+        cookies.save()
         st.rerun()
     st.markdown("---")
 
