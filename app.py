@@ -13,6 +13,7 @@ import requests    # 이미지 다운로드용
 from PIL import Image  # 🖼️ 이미지 실제 크기 계산 및 자동 축소용
 from PIL.ExifTags import TAGS, GPSTAGS  # 🔧 사진 GPS 좌표 추출용
 import re  # 🔧 지도 URL에서 좌표 파싱용
+from urllib.parse import quote  # 🔧 카카오맵 검색 링크용 URL 인코딩
 
 # 🏢 페이지 기본 설정
 st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
@@ -194,16 +195,25 @@ def extract_gps_from_image(file_bytes):
         return None, f"이미지 처리 중 오류: {e}"
 
 
-# 🔧 [신규] 저장된 구글맵 링크(query=위도,경도 형식)에서 좌표만 다시 뽑아내는 함수
+# 🔧 좌표를 카카오맵 링크로 만드는 함수 (표의 '📍 지도 보기' 클릭 시 카카오맵으로 열림)
+def build_kakao_link(lat, lng, label="현장점검위치"):
+    return f"https://map.kakao.com/link/map/{quote(label)},{lat},{lng}"
+
+
+# 🔧 저장된 지도 링크(카카오맵/구글맵 형식) 또는 순수 좌표 텍스트에서 좌표만 다시 뽑아내는 함수
 def extract_latlng_from_maps_url(url):
     if not url:
         return None
     text = str(url).strip()
-    # 1) 이 앱이 저장해둔 구글맵 검색 링크 형식
+    # 1) 카카오맵 링크 형식: /link/map/이름,위도,경도
+    match = re.search(r"/link/map/[^,]*,([-\d.]+),([-\d.]+)", text)
+    if match:
+        return float(match.group(1)), float(match.group(2))
+    # 2) (과거에 저장된) 구글맵 검색 링크 형식: query=위도,경도
     match = re.search(r"query=([-\d.]+)\s*,\s*([-\d.]+)", text)
     if match:
         return float(match.group(1)), float(match.group(2))
-    # 2) 카카오맵/네이버지도 등에서 복사한 "위도, 경도" 순수 텍스트 형식
+    # 3) 카카오맵/네이버지도 등에서 복사한 "위도, 경도" 순수 텍스트 형식
     match = re.match(r"^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$", text)
     if match:
         return float(match.group(1)), float(match.group(2))
@@ -698,7 +708,11 @@ if save_btn:
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
                     if not (val_str.startswith("http://") or val_str.startswith("https://")):
-                        changes[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
+                        coord_match = re.match(r"^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$", val_str)
+                        if coord_match:
+                            changes[k] = build_kakao_link(float(coord_match.group(1)), float(coord_match.group(2)))
+                        else:
+                            changes[k] = f"https://map.kakao.com/?q={quote(val_str)}"
 
             if str(doc_id).startswith("sample"):
                 row_full = df.iloc[int(row_idx)].to_dict()
@@ -727,7 +741,11 @@ if save_btn:
                 if ("위치" in k or "지도" in k) and v:
                     val_str = str(v).strip()
                     if not (val_str.startswith("http://") or val_str.startswith("https://")):
-                        row_data[k] = f"https://www.google.com/maps/search/?api=1&query={val_str}"
+                        coord_match = re.match(r"^\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$", val_str)
+                        if coord_match:
+                            row_data[k] = build_kakao_link(float(coord_match.group(1)), float(coord_match.group(2)))
+                        else:
+                            row_data[k] = f"https://map.kakao.com/?q={quote(val_str)}"
 
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             db.collection("infra_management").add(row_data)
@@ -897,7 +915,7 @@ if photo_col:
                                         location_status = "already_filled"
                                     else:
                                         lat, lng = detected_latlng
-                                        update_payload[location_col] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                                        update_payload[location_col] = build_kakao_link(lat, lng)
                                         location_status = "applied"
 
                                 target_doc_ref.update(update_payload)
@@ -982,7 +1000,7 @@ if location_col_for_map and photo_col and 'facility_options' in dir() and facili
                 if parsed:
                     p_lat, p_lng = parsed
                     map_doc_ref.update({
-                        location_col_for_map: f"https://www.google.com/maps/search/?api=1&query={p_lat},{p_lng}"
+                        location_col_for_map: build_kakao_link(p_lat, p_lng)
                     })
                     st.success("🎉 좌표가 저장되었습니다!")
                     st.cache_data.clear()
