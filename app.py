@@ -1,4 +1,11 @@
 import streamlit as st
+
+# 🔧 [호환성 패치] streamlit-cookies-manager가 최신 Streamlit에서 사라진 st.cache를 사용하므로
+#    st.cache_data로 대체해서 에러를 우회합니다 (라이브러리 코드 자체는 건드리지 않음)
+if not hasattr(st, "cache"):
+    st.cache = st.cache_data
+
+from streamlit_cookies_manager import EncryptedCookieManager  # 🔐 30일 로그인 유지용 쿠키
 import pandas as pd
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
@@ -7,7 +14,6 @@ from datetime import datetime, timedelta
 import streamlit.components.v1 as components
 import base64  # 🔐 구글 ID 토큰 해독용
 from streamlit_oauth import OAuth2Component  # 🔐 구글 OAuth 로그인용
-from streamlit_cookies_manager import EncryptedCookieManager  # 🔐 30일 로그인 유지용 쿠키
 import io          # 엑셀 파일 생성용
 import xlsxwriter  # 엑셀 파일 생성 및 이미지 삽입용
 import requests    # 이미지 다운로드용
