@@ -712,7 +712,7 @@ if save_btn:
                         if coord_match:
                             changes[k] = build_kakao_link(float(coord_match.group(1)), float(coord_match.group(2)))
                         else:
-                            changes[k] = f"https://map.kakao.com/?q={quote(val_str)}"
+                            changes[k] = f"https://map.kakao.com/link/search/{quote(val_str)}"
 
             if str(doc_id).startswith("sample"):
                 row_full = df.iloc[int(row_idx)].to_dict()
@@ -745,7 +745,7 @@ if save_btn:
                         if coord_match:
                             row_data[k] = build_kakao_link(float(coord_match.group(1)), float(coord_match.group(2)))
                         else:
-                            row_data[k] = f"https://map.kakao.com/?q={quote(val_str)}"
+                            row_data[k] = f"https://map.kakao.com/link/search/{quote(val_str)}"
 
             row_data = {k: ("" if pd.isna(v) else v) for k, v in row_data.items()}
             db.collection("infra_management").add(row_data)
