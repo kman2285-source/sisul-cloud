@@ -7,6 +7,7 @@ if not hasattr(st, "cache"):
 
 from streamlit_cookies_manager import EncryptedCookieManager  # 🔐 30일 로그인 유지용 쿠키
 import pandas as pd
+import altair as alt  # 🔧 반복 문제 분석 섹션의 가로 막대 그래프용
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
 import json
@@ -1093,7 +1094,19 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 kw_counts[kw] = cnt
         if kw_counts:
             kw_df = pd.DataFrame(sorted(kw_counts.items(), key=lambda x: -x[1]), columns=["키워드", "건수"])
-            st.dataframe(kw_df, hide_index=True, use_container_width=True)
+            st.dataframe(
+                kw_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "건수": st.column_config.ProgressColumn(
+                        "건수",
+                        min_value=0,
+                        max_value=int(kw_df["건수"].max()),
+                        format="%d건",
+                    )
+                },
+            )
         else:
             st.info("아직 점검결과에 문제 키워드가 감지된 기록이 없습니다.")
 
@@ -1106,7 +1119,19 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             repeat_counts = repeat_counts[(repeat_counts.index != "") & (repeat_counts >= 2)]
             if len(repeat_counts) > 0:
                 repeat_df = repeat_counts.rename("문제 확인 횟수").reset_index().rename(columns={"index": name_col_analysis})
-                st.dataframe(repeat_df, hide_index=True, use_container_width=True)
+                st.dataframe(
+                    repeat_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "문제 확인 횟수": st.column_config.ProgressColumn(
+                            "문제 확인 횟수",
+                            min_value=0,
+                            max_value=int(repeat_df["문제 확인 횟수"].max()),
+                            format="%d회",
+                        )
+                    },
+                )
             else:
                 st.info("점검결과 기준으로 2회 이상 반복 확인된 문제 시설물이 아직 없습니다.")
         else:
@@ -1123,7 +1148,27 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             region_counts = problem_rows[region_col].value_counts()
             region_counts = region_counts[region_counts.index != ""]
             if len(region_counts) > 0:
-                st.bar_chart(region_counts)
+                region_chart_df = region_counts.rename("건수").reset_index().rename(columns={"index": "지역"})
+                region_chart_df.columns = ["지역", "건수"]
+
+                # 🔧 [개선] 세로 막대(글자 세로로 깨짐) → 가로 막대(지역명이 항상 가로로 온전히 보임)
+                #    + 건수에 따라 색이 진해지는 그라데이션 적용
+                bar_chart = (
+                    alt.Chart(region_chart_df)
+                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
+                    .encode(
+                        x=alt.X("건수:Q", title="건수"),
+                        y=alt.Y("지역:N", sort="-x", title=None, axis=alt.Axis(labelAngle=0, labelLimit=200)),
+                        color=alt.Color(
+                            "건수:Q",
+                            scale=alt.Scale(scheme="orangered"),
+                            legend=None,
+                        ),
+                        tooltip=[alt.Tooltip("지역:N", title="지역"), alt.Tooltip("건수:Q", title="건수")],
+                    )
+                    .properties(height=max(220, 32 * len(region_chart_df)))
+                )
+                st.altair_chart(bar_chart, use_container_width=True)
                 top_region = region_counts.idxmax()
                 st.caption(f"💡 실제 문제가 확인된 기록이 가장 많이 몰린 곳: **{top_region}** ({int(region_counts.max())}건)")
             else:
