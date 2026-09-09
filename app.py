@@ -1082,98 +1082,171 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
         "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수"
     ]
+    # 🔧 [신규] "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
+    NEGATION_TERMS = [
+        "이상없음", "이상 없음", "이상무", "이상 무", "문제없음", "문제 없음",
+        "특이사항 없음", "특이사항없음", "양호", "정상"
+    ]
+
+    def is_real_problem(text):
+        if not text:
+            return False
+        if not any(kw in text for kw in PROBLEM_KEYWORDS):
+            return False
+        if any(neg in text for neg in NEGATION_TERMS):
+            return False
+        # "오수 유입 X", "스크린 X"처럼 이 데이터에서 'X'는 '아님/없음'을 뜻하는 관용 표기
+        if re.search(r"(?<![A-Za-z])X(?![A-Za-z])", text):
+            return False
+        return True
+
+    analysis_df["__문제여부"] = analysis_df["__유효결과"].apply(is_real_problem)
+    problem_rows_all = analysis_df[analysis_df["__문제여부"]]
+
+    # 🎨 표를 크고 진하게 보여주기 위한 공통 HTML 렌더러 (Streamlit 기본 표는 글씨가 작고 흐려서 커스텀)
+    def render_bold_bar_table(pairs, unit="건", bar_color="#d64545"):
+        if not pairs:
+            return "<p style='font-size:16px;color:#111;'>해당 데이터가 없습니다.</p>"
+        max_v = max(v for _, v in pairs)
+        rows_html = ""
+        for label, val in pairs:
+            pct = int(val / max_v * 100) if max_v > 0 else 0
+            rows_html += f"""
+            <tr>
+                <td style="padding:10px 12px; font-size:17px; font-weight:700; color:#111; white-space:nowrap;">{label}</td>
+                <td style="padding:10px 12px; width:100%;">
+                    <div style="background:#eee; border-radius:6px; height:22px; width:100%; position:relative;">
+                        <div style="background:{bar_color}; height:22px; border-radius:6px; width:{pct}%;"></div>
+                    </div>
+                </td>
+                <td style="padding:10px 12px; font-size:17px; font-weight:800; color:#111; white-space:nowrap; text-align:right;">{val}{unit}</td>
+            </tr>
+            """
+        return f"""
+        <table style="width:100%; border-collapse:collapse; background:#fff;">
+        {rows_html}
+        </table>
+        """
 
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.markdown("**① 문제 키워드 빈도 (점검결과 기준)**")
+        st.markdown("#### ① 문제 키워드 빈도 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과 기준)</span>", unsafe_allow_html=True)
         kw_counts = {}
         for kw in PROBLEM_KEYWORDS:
-            cnt = int(analysis_df["__유효결과"].str.contains(kw, na=False, regex=False).sum())
+            cnt = int(problem_rows_all["__유효결과"].str.contains(kw, na=False, regex=False).sum())
             if cnt > 0:
                 kw_counts[kw] = cnt
-        if kw_counts:
-            kw_df = pd.DataFrame(sorted(kw_counts.items(), key=lambda x: -x[1]), columns=["키워드", "건수"])
-            st.dataframe(
-                kw_df,
-                hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "건수": st.column_config.ProgressColumn(
-                        "건수",
-                        min_value=0,
-                        max_value=int(kw_df["건수"].max()),
-                        format="%d건",
-                    )
-                },
-            )
-        else:
-            st.info("아직 점검결과에 문제 키워드가 감지된 기록이 없습니다.")
+        kw_pairs = sorted(kw_counts.items(), key=lambda x: -x[1])
+        st.markdown(render_bold_bar_table(kw_pairs, unit="건", bar_color="#d64545"), unsafe_allow_html=True)
 
     with col_b:
-        st.markdown("**② 반복해서 문제가 확인된 시설물 (2회 이상)**")
-        if name_col_analysis and name_col_analysis in analysis_df.columns and PROBLEM_KEYWORDS:
-            problem_pattern = "|".join(PROBLEM_KEYWORDS)
-            has_problem = analysis_df["__유효결과"].str.contains(problem_pattern, na=False, regex=True)
-            repeat_counts = analysis_df.loc[has_problem, name_col_analysis].value_counts()
+        st.markdown("#### ② 반복 확인된 문제 시설물 <span style='font-size:14px;color:#555;font-weight:400;'>(2회 이상)</span>", unsafe_allow_html=True)
+        if name_col_analysis and name_col_analysis in analysis_df.columns:
+            repeat_counts = problem_rows_all[name_col_analysis].value_counts()
             repeat_counts = repeat_counts[(repeat_counts.index != "") & (repeat_counts >= 2)]
-            if len(repeat_counts) > 0:
-                repeat_df = repeat_counts.rename("문제 확인 횟수").reset_index().rename(columns={"index": name_col_analysis})
-                st.dataframe(
-                    repeat_df,
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "문제 확인 횟수": st.column_config.ProgressColumn(
-                            "문제 확인 횟수",
-                            min_value=0,
-                            max_value=int(repeat_df["문제 확인 횟수"].max()),
-                            format="%d회",
-                        )
-                    },
-                )
-            else:
-                st.info("점검결과 기준으로 2회 이상 반복 확인된 문제 시설물이 아직 없습니다.")
+            repeat_pairs = list(repeat_counts.items())
+            st.markdown(render_bold_bar_table(repeat_pairs, unit="회", bar_color="#c0392b"), unsafe_allow_html=True)
         else:
-            st.info("시설명 항목을 찾을 수 없습니다.")
+            st.markdown("<p style='font-size:16px;color:#111;'>시설명 항목을 찾을 수 없습니다.</p>", unsafe_allow_html=True)
 
-    st.markdown("**③ 문제 다발 지역 (점검결과 기준)**")
-    if PROBLEM_KEYWORDS:
-        problem_pattern = "|".join(PROBLEM_KEYWORDS)
-        problem_mask = analysis_df["__유효결과"].str.contains(problem_pattern, na=False, regex=True)
-        problem_rows = analysis_df[problem_mask]
+    st.markdown("#### ③ 문제 다발 지역 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과 기준)</span>", unsafe_allow_html=True)
+    region_col = biz_col or area_col
+    if region_col and region_col in problem_rows_all.columns and len(problem_rows_all) > 0:
+        region_counts = problem_rows_all[region_col].value_counts()
+        region_counts = region_counts[region_counts.index != ""]
+        if len(region_counts) > 0:
+            region_chart_df = region_counts.rename("건수").reset_index().rename(columns={"index": "지역"})
+            region_chart_df.columns = ["지역", "건수"]
 
-        region_col = biz_col or area_col
-        if region_col and region_col in problem_rows.columns and len(problem_rows) > 0:
-            region_counts = problem_rows[region_col].value_counts()
-            region_counts = region_counts[region_counts.index != ""]
-            if len(region_counts) > 0:
-                region_chart_df = region_counts.rename("건수").reset_index().rename(columns={"index": "지역"})
-                region_chart_df.columns = ["지역", "건수"]
-
-                # 🔧 [개선] 세로 막대(글자 세로로 깨짐) → 가로 막대(지역명이 항상 가로로 온전히 보임)
-                #    + 건수에 따라 색이 진해지는 그라데이션 적용
-                bar_chart = (
-                    alt.Chart(region_chart_df)
-                    .mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4)
-                    .encode(
-                        x=alt.X("건수:Q", title="건수"),
-                        y=alt.Y("지역:N", sort="-x", title=None, axis=alt.Axis(labelAngle=0, labelLimit=200)),
-                        color=alt.Color(
-                            "건수:Q",
-                            scale=alt.Scale(scheme="orangered"),
-                            legend=None,
-                        ),
-                        tooltip=[alt.Tooltip("지역:N", title="지역"), alt.Tooltip("건수:Q", title="건수")],
-                    )
-                    .properties(height=max(220, 32 * len(region_chart_df)))
-                )
-                st.altair_chart(bar_chart, use_container_width=True)
-                top_region = region_counts.idxmax()
-                st.caption(f"💡 실제 문제가 확인된 기록이 가장 많이 몰린 곳: **{top_region}** ({int(region_counts.max())}건)")
-            else:
-                st.info("지역별로 집계할 문제 기록이 아직 없습니다.")
+            # 🔧 가로 막대 + 굵고 큰 검정 글씨(라벨/숫자) + 막대 위에 숫자 직접 표시
+            base = alt.Chart(region_chart_df).encode(
+                x=alt.X("건수:Q", title="건수"),
+                y=alt.Y("지역:N", sort="-x", title=None),
+            )
+            bars = base.mark_bar(cornerRadiusTopRight=4, cornerRadiusBottomRight=4).encode(
+                color=alt.Color("건수:Q", scale=alt.Scale(scheme="orangered"), legend=None),
+                tooltip=[alt.Tooltip("지역:N", title="지역"), alt.Tooltip("건수:Q", title="건수")],
+            )
+            labels = base.mark_text(align="left", dx=5, fontSize=15, fontWeight="bold", color="black").encode(
+                text="건수:Q"
+            )
+            combo_chart = (bars + labels).properties(
+                height=max(220, 34 * len(region_chart_df))
+            ).configure_axis(
+                labelFontSize=16,
+                labelFontWeight="bold",
+                labelColor="black",
+                titleFontSize=14,
+                titleColor="black",
+                labelAngle=0,
+                labelLimit=220,
+            )
+            st.altair_chart(combo_chart, use_container_width=True)
+            top_region = region_counts.idxmax()
+            st.markdown(
+                f"<p style='font-size:16px;color:#111;'>💡 실제 문제가 가장 많이 확인된 곳: "
+                f"<span style='font-weight:800;color:#c0392b;'>{top_region}</span> "
+                f"({int(region_counts.max())}건)</p>",
+                unsafe_allow_html=True,
+            )
         else:
-            st.info("사업처/지역 항목을 찾을 수 없거나, 점검결과 기준으로 문제로 분류된 기록이 없습니다.")
+            st.info("지역별로 집계할 문제 기록이 아직 없습니다.")
+    else:
+        st.info("사업처/지역 항목을 찾을 수 없거나, 점검결과 기준으로 문제로 분류된 기록이 없습니다.")
 
-    st.caption("⚠️ 이 분석은 단순 키워드 매칭 기반이라 참고용입니다 — 실제 조치 여부나 심각도는 담당자 확인이 필요합니다.")
+    # ==========================================================
+    # 📚 [신규] 시설물별 점검 이력 누적 조회 — 문제 여부와 무관하게 반복 점검된 시설물의 전체 변화 흐름을 확인
+    # ==========================================================
+    st.markdown("#### ④ 시설물별 점검 이력 <span style='font-size:14px;color:#555;font-weight:400;'>(같은 시설의 과거 기록을 시간순으로 누적 확인)</span>", unsafe_allow_html=True)
+
+    date_col_analysis = next((c for c in col_order if "일" in c or "날짜" in c), None)
+    type_col_analysis = next((c for c in col_order if "유형" in c), None)
+
+    if name_col_analysis and name_col_analysis in analysis_df.columns:
+        all_repeat_counts = analysis_df[name_col_analysis].value_counts()
+        all_repeat_counts = all_repeat_counts[(all_repeat_counts.index != "") & (all_repeat_counts >= 2)]
+
+        if len(all_repeat_counts) > 0:
+            history_options = [f"{name} ({cnt}회 점검)" for name, cnt in all_repeat_counts.items()]
+            selected_history = st.selectbox(
+                "이력을 확인할 시설물을 선택하세요 (2회 이상 점검된 시설물만 표시):",
+                history_options,
+                key="history_facility_select",
+            )
+            selected_name = selected_history.rsplit(" (", 1)[0]
+
+            hist_cols = [c for c in [date_col_analysis, type_col_analysis, content_col, result_col] if c and c in analysis_df.columns]
+            hist_df = analysis_df[analysis_df[name_col_analysis] == selected_name][hist_cols].copy()
+            if date_col_analysis and date_col_analysis in hist_df.columns:
+                hist_df = hist_df.sort_values(date_col_analysis)
+
+            # 🎨 시간순 타임라인 형태로, 문제 발견된 회차는 붉게 강조해서 변화 흐름이 한눈에 보이게 표시
+            timeline_html = "<div style='display:flex; flex-direction:column; gap:8px;'>"
+            for _, hrow in hist_df.iterrows():
+                h_date = str(hrow.get(date_col_analysis, "")) if date_col_analysis else ""
+                h_type = str(hrow.get(type_col_analysis, "")) if type_col_analysis else ""
+                h_content = str(hrow.get(content_col, "")) if content_col else ""
+                h_result = str(hrow.get(result_col, "")) if result_col else ""
+                is_prob = is_real_problem(h_result if h_result and h_result != h_content else "")
+                border_color = "#c0392b" if is_prob else "#ccc"
+                badge = "🔴 문제 확인" if is_prob else "⚪ 이상 없음/미기재"
+                timeline_html += f"""
+                <div style="border-left:5px solid {border_color}; padding:10px 14px; background:#fafafa;">
+                    <div style="font-size:15px; font-weight:800; color:#111;">{h_date} <span style="font-size:13px; font-weight:600; color:#555;">· {h_type}</span> <span style="float:right; font-size:13px; font-weight:700; color:{border_color};">{badge}</span></div>
+                    <div style="font-size:15px; color:#222; margin-top:4px;"><b>내용:</b> {h_content if h_content else '(없음)'}</div>
+                    <div style="font-size:15px; color:#222;"><b>결과:</b> {h_result if h_result else '(미기재)'}</div>
+                </div>
+                """
+            timeline_html += "</div>"
+            st.markdown(timeline_html, unsafe_allow_html=True)
+        else:
+            st.markdown("<p style='font-size:16px;color:#111;'>아직 2회 이상 반복 점검된 시설물이 없습니다.</p>", unsafe_allow_html=True)
+    else:
+        st.markdown("<p style='font-size:16px;color:#111;'>시설명 항목을 찾을 수 없습니다.</p>", unsafe_allow_html=True)
+
+    st.markdown(
+        "<p style='font-size:13px;color:#888;'>⚠️ 이 분석은 규칙 기반 키워드 매칭(참고용)입니다 — "
+        "실제 조치 여부나 심각도는 담당자 확인이 필요합니다.</p>",
+        unsafe_allow_html=True,
+    )
