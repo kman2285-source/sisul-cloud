@@ -1058,11 +1058,13 @@ else:
 # ==========================================================
 st.markdown("---")
 with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", expanded=False):
-    st.caption(
+    st.markdown(
+        "<p style='font-size:16px; font-weight:700; color:#111;'>"
         "현재 등록된 전체 점검 기록을 기준으로 매번 새로 계산됩니다. "
-        "**점검결과 칸에 실제로 적힌 내용만** 대상으로 문제 키워드를 찾습니다 "
+        "<b>점검결과 칸에 실제로 적힌 내용만</b> 대상으로 문제 키워드를 찾습니다 "
         "(점검내용 칸은 점검하게 된 사유일 뿐이라 제외하고, 점검결과가 비어있거나 점검내용과 똑같이 반복된 경우도 "
-        "'특이사항 없음'으로 보고 제외합니다)."
+        "'특이사항 없음'으로 보고 제외합니다).</p>",
+        unsafe_allow_html=True,
     )
 
     content_col = next((c for c in col_order if "내용" in c), None)
@@ -1104,6 +1106,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     problem_rows_all = analysis_df[analysis_df["__문제여부"]]
 
     # 🎨 표를 크고 진하게 보여주기 위한 공통 HTML 렌더러 (Streamlit 기본 표는 글씨가 작고 흐려서 커스텀)
+    #    ⚠️ 마크다운이 들여쓰기된 줄을 코드블럭으로 오인하지 않도록, HTML을 줄바꿈/들여쓰기 없이 한 줄로 이어붙임
     def render_bold_bar_table(pairs, unit="건", bar_color="#d64545"):
         if not pairs:
             return "<p style='font-size:16px;color:#111;'>해당 데이터가 없습니다.</p>"
@@ -1111,22 +1114,17 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         rows_html = ""
         for label, val in pairs:
             pct = int(val / max_v * 100) if max_v > 0 else 0
-            rows_html += f"""
-            <tr>
-                <td style="padding:10px 12px; font-size:17px; font-weight:700; color:#111; white-space:nowrap;">{label}</td>
-                <td style="padding:10px 12px; width:100%;">
-                    <div style="background:#eee; border-radius:6px; height:22px; width:100%; position:relative;">
-                        <div style="background:{bar_color}; height:22px; border-radius:6px; width:{pct}%;"></div>
-                    </div>
-                </td>
-                <td style="padding:10px 12px; font-size:17px; font-weight:800; color:#111; white-space:nowrap; text-align:right;">{val}{unit}</td>
-            </tr>
-            """
-        return f"""
-        <table style="width:100%; border-collapse:collapse; background:#fff;">
-        {rows_html}
-        </table>
-        """
+            rows_html += (
+                "<tr>"
+                f"<td style='padding:10px 12px; font-size:17px; font-weight:700; color:#111; white-space:nowrap;'>{label}</td>"
+                "<td style='padding:10px 12px; width:100%;'>"
+                "<div style='background:#eee; border-radius:6px; height:22px; width:100%; position:relative;'>"
+                f"<div style='background:{bar_color}; height:22px; border-radius:6px; width:{pct}%;'></div>"
+                "</div></td>"
+                f"<td style='padding:10px 12px; font-size:17px; font-weight:800; color:#111; white-space:nowrap; text-align:right;'>{val}{unit}</td>"
+                "</tr>"
+            )
+        return f"<table style='width:100%; border-collapse:collapse; background:#fff;'>{rows_html}</table>"
 
     col_a, col_b = st.columns(2)
 
@@ -1231,13 +1229,15 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 is_prob = is_real_problem(h_result if h_result and h_result != h_content else "")
                 border_color = "#c0392b" if is_prob else "#ccc"
                 badge = "🔴 문제 확인" if is_prob else "⚪ 이상 없음/미기재"
-                timeline_html += f"""
-                <div style="border-left:5px solid {border_color}; padding:10px 14px; background:#fafafa;">
-                    <div style="font-size:15px; font-weight:800; color:#111;">{h_date} <span style="font-size:13px; font-weight:600; color:#555;">· {h_type}</span> <span style="float:right; font-size:13px; font-weight:700; color:{border_color};">{badge}</span></div>
-                    <div style="font-size:15px; color:#222; margin-top:4px;"><b>내용:</b> {h_content if h_content else '(없음)'}</div>
-                    <div style="font-size:15px; color:#222;"><b>결과:</b> {h_result if h_result else '(미기재)'}</div>
-                </div>
-                """
+                timeline_html += (
+                    f"<div style='border-left:5px solid {border_color}; padding:10px 14px; background:#fafafa;'>"
+                    f"<div style='font-size:15px; font-weight:800; color:#111;'>{h_date} "
+                    f"<span style='font-size:13px; font-weight:600; color:#555;'>· {h_type}</span> "
+                    f"<span style='float:right; font-size:13px; font-weight:700; color:{border_color};'>{badge}</span></div>"
+                    f"<div style='font-size:15px; color:#222; margin-top:4px;'><b>내용:</b> {h_content if h_content else '(없음)'}</div>"
+                    f"<div style='font-size:15px; color:#222;'><b>결과:</b> {h_result if h_result else '(미기재)'}</div>"
+                    "</div>"
+                )
             timeline_html += "</div>"
             st.markdown(timeline_html, unsafe_allow_html=True)
         else:
