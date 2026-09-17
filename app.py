@@ -24,7 +24,12 @@ import re  # 🔧 지도 URL에서 좌표 파싱용
 from urllib.parse import quote  # 🔧 카카오맵 검색 링크용 URL 인코딩
 
 # 🏢 페이지 기본 설정
-st.set_page_config(page_title="대구공공시설관리공단 시설관리팀 운영 웹", layout="wide")
+try:
+    _page_icon = Image.open("dpfc.png")
+except Exception:
+    _page_icon = "📱"  # 아이콘 파일이 저장소에 없을 때를 대비한 안전장치
+
+st.set_page_config(page_title="시설관리팀 운영 웹", page_icon=_page_icon, layout="wide")
 
 # 🔄 st.data_editor 강제 리프레시를 위한 버전 관리 세션 상태 초기화
 if "table_version" not in st.session_state:
@@ -280,7 +285,7 @@ if not firebase_admin._apps:
 db = firestore.client()
 bucket = storage.bucket()
 
-st.title("📱 대구공공시설관리공단 시설관리팀 운영 웹")
+st.title("📱 시설관리팀 운영 웹")
 st.markdown("---")
 
 # ☁️ 좌측 사이드바 용량 표시 및 사용자 로그아웃
