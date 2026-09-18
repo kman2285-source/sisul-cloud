@@ -1062,11 +1062,11 @@ else:
 # 🚨 [신규] 반복 문제 및 예방 안전활동 분석 (규칙 기반 자동 분석 — 별도 AI 호출 없음)
 # ==========================================================
 st.markdown("---")
-with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", expanded=False):
+with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", expanded=True):
     st.markdown(
         "<p style='font-size:16px; font-weight:700; color:#111;'>"
-        "현재 등록된 전체 점검 기록을 기준으로 매번 새로 계산됩니다. "
-        "<b>점검결과 칸에 실제로 적힌 내용만</b> 대상으로 문제 키워드를 찾습니다 "
+        "이 화면을 열 때마다 현재 등록된 전체 점검 기록을 기준으로 매번 새로 계산됩니다. "
+        "<b>점검결과·비고 칸에 실제로 적힌 내용</b>을 대상으로 문제 키워드를 찾습니다 "
         "(점검내용 칸은 점검하게 된 사유일 뿐이라 제외하고, 점검결과가 비어있거나 점검내용과 똑같이 반복된 경우도 "
         "'특이사항 없음'으로 보고 제외합니다).</p>",
         unsafe_allow_html=True,
@@ -1077,19 +1077,24 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     name_col_analysis = next((c for c in col_order if "명" in c or "이름" in c), None)
     biz_col = next((c for c in col_order if "사업처" in c), None)
     area_col = next((c for c in col_order if "지역" in c or "하천" in c), None)
+    status_col = next((c for c in col_order if "상태" in c), None)
+    bigo_col = next((c for c in col_order if "비고" in c), None)
 
     analysis_df = edited_df.copy()
     content_text = analysis_df[content_col].fillna("").astype(str).str.strip() if content_col and content_col in analysis_df.columns else pd.Series([""] * len(analysis_df), index=analysis_df.index)
     result_text = analysis_df[result_col].fillna("").astype(str).str.strip() if result_col and result_col in analysis_df.columns else pd.Series([""] * len(analysis_df), index=analysis_df.index)
+    bigo_text = analysis_df[bigo_col].fillna("").astype(str).str.strip() if bigo_col and bigo_col in analysis_df.columns else pd.Series([""] * len(analysis_df), index=analysis_df.index)
 
-    # 🔧 점검결과가 비어있거나, 점검내용을 그대로 복사/반복한 경우는 '실제 발견 사항 없음'으로 간주해 제외
-    analysis_df["__유효결과"] = result_text.where((result_text != "") & (result_text != content_text), "")
+    # 🔧 점검결과가 비어있거나, 점검내용을 그대로 복사/반복한 경우는 '실제 발견 사항 없음'으로 간주
+    #    + 비고 칸(현재/과거 문제 장소 기록)도 함께 문제 판단 대상에 포함
+    valid_result_only = result_text.where((result_text != "") & (result_text != content_text), "")
+    analysis_df["__유효결과"] = (valid_result_only + " " + bigo_text).str.strip()
 
     PROBLEM_KEYWORDS = [
         "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
         "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수"
     ]
-    # 🔧 [신규] "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
+    # 🔧 "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
     NEGATION_TERMS = [
         "이상없음", "이상 없음", "이상무", "이상 무", "문제없음", "문제 없음",
         "특이사항 없음", "특이사항없음", "양호", "정상"
@@ -1109,6 +1114,44 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
 
     analysis_df["__문제여부"] = analysis_df["__유효결과"].apply(is_real_problem)
     problem_rows_all = analysis_df[analysis_df["__문제여부"]]
+
+    # ==========================================================
+    # ⓪ [신규] 상태별 현황 — 정상/점검필요/정비중/조치완료 건수 + 주의가 필요한 행 번호(NO) 나열
+    # ==========================================================
+    st.markdown("#### ⓪ 상태별 현황", unsafe_allow_html=True)
+    if status_col and status_col in analysis_df.columns:
+        status_series = analysis_df[status_col].fillna("").astype(str).str.strip().replace("", "미기재")
+        status_counts = status_series.value_counts()
+        status_color_map = {"정상": "#2e7d32", "조치완료": "#2e7d32", "점검필요": "#c0392b", "정비중": "#e08e0b", "미기재": "#888888"}
+
+        cards_html = "<div style='display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px;'>"
+        for status_name, cnt in status_counts.items():
+            color = status_color_map.get(status_name, "#555555")
+            cards_html += (
+                f"<div style='flex:1; min-width:130px; border:2px solid {color}; border-radius:10px; padding:14px; text-align:center; background:#fff;'>"
+                f"<div style='font-size:15px; font-weight:700; color:{color};'>{status_name}</div>"
+                f"<div style='font-size:28px; font-weight:900; color:#111;'>{int(cnt)}건</div>"
+                "</div>"
+            )
+        cards_html += "</div>"
+        st.markdown(cards_html, unsafe_allow_html=True)
+
+        no_col_name = "NO" if "NO" in analysis_df.columns else None
+        for att_status in ["점검필요", "정비중"]:
+            att_rows = analysis_df[status_series == att_status]
+            if len(att_rows) > 0:
+                if no_col_name:
+                    no_list = ", ".join(str(int(n)) for n in att_rows[no_col_name].tolist())
+                    line = f"<b>{att_status}</b> ({len(att_rows)}건) — NO {no_list}"
+                else:
+                    line = f"<b>{att_status}</b> ({len(att_rows)}건)"
+                color = status_color_map.get(att_status, "#555555")
+                st.markdown(
+                    f"<p style='font-size:15px; color:#111; background:#fff8f6; border-left:4px solid {color}; padding:8px 12px; margin:6px 0;'>{line}</p>",
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.markdown("<p style='font-size:16px;color:#111;'>상태 항목을 찾을 수 없습니다.</p>", unsafe_allow_html=True)
 
     # 🎨 표를 크고 진하게 보여주기 위한 공통 HTML 렌더러 (Streamlit 기본 표는 글씨가 작고 흐려서 커스텀)
     #    ⚠️ 마크다운이 들여쓰기된 줄을 코드블럭으로 오인하지 않도록, HTML을 줄바꿈/들여쓰기 없이 한 줄로 이어붙임
@@ -1134,7 +1177,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.markdown("#### ① 문제 키워드 빈도 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과 기준)</span>", unsafe_allow_html=True)
+        st.markdown("#### ① 문제 키워드 빈도 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과·비고 기준)</span>", unsafe_allow_html=True)
         kw_counts = {}
         for kw in PROBLEM_KEYWORDS:
             cnt = int(problem_rows_all["__유효결과"].str.contains(kw, na=False, regex=False).sum())
@@ -1153,7 +1196,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         else:
             st.markdown("<p style='font-size:16px;color:#111;'>시설명 항목을 찾을 수 없습니다.</p>", unsafe_allow_html=True)
 
-    st.markdown("#### ③ 문제 다발 지역 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과 기준)</span>", unsafe_allow_html=True)
+    st.markdown("#### ③ 문제 다발 지역 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과·비고 기준)</span>", unsafe_allow_html=True)
     region_col = biz_col or area_col
     if region_col and region_col in problem_rows_all.columns and len(problem_rows_all) > 0:
         region_counts = problem_rows_all[region_col].value_counts()
@@ -1196,7 +1239,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         else:
             st.info("지역별로 집계할 문제 기록이 아직 없습니다.")
     else:
-        st.info("사업처/지역 항목을 찾을 수 없거나, 점검결과 기준으로 문제로 분류된 기록이 없습니다.")
+        st.info("사업처/지역 항목을 찾을 수 없거나, 점검결과·비고 기준으로 문제로 분류된 기록이 없습니다.")
 
     # ==========================================================
     # 📚 [신규] 시설물별 점검 이력 누적 조회 — 문제 여부와 무관하게 반복 점검된 시설물의 전체 변화 흐름을 확인
@@ -1219,7 +1262,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             )
             selected_name = selected_history.rsplit(" (", 1)[0]
 
-            hist_cols = [c for c in [date_col_analysis, type_col_analysis, content_col, result_col] if c and c in analysis_df.columns]
+            hist_cols = [c for c in [date_col_analysis, type_col_analysis, content_col, result_col, bigo_col] if c and c in analysis_df.columns]
             hist_df = analysis_df[analysis_df[name_col_analysis] == selected_name][hist_cols].copy()
             if date_col_analysis and date_col_analysis in hist_df.columns:
                 hist_df = hist_df.sort_values(date_col_analysis)
@@ -1231,7 +1274,8 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 h_type = str(hrow.get(type_col_analysis, "")) if type_col_analysis else ""
                 h_content = str(hrow.get(content_col, "")) if content_col else ""
                 h_result = str(hrow.get(result_col, "")) if result_col else ""
-                is_prob = is_real_problem(h_result if h_result and h_result != h_content else "")
+                h_bigo = str(hrow.get(bigo_col, "")) if bigo_col else ""
+                is_prob = is_real_problem(((h_result if h_result and h_result != h_content else "") + " " + h_bigo).strip())
                 border_color = "#c0392b" if is_prob else "#ccc"
                 badge = "🔴 문제 확인" if is_prob else "⚪ 이상 없음/미기재"
                 timeline_html += (
@@ -1241,6 +1285,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                     f"<span style='float:right; font-size:13px; font-weight:700; color:{border_color};'>{badge}</span></div>"
                     f"<div style='font-size:15px; color:#222; margin-top:4px;'><b>내용:</b> {h_content if h_content else '(없음)'}</div>"
                     f"<div style='font-size:15px; color:#222;'><b>결과:</b> {h_result if h_result else '(미기재)'}</div>"
+                    f"<div style='font-size:15px; color:#222;'><b>비고:</b> {h_bigo if h_bigo else '(없음)'}</div>"
                     "</div>"
                 )
             timeline_html += "</div>"
