@@ -1092,8 +1092,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
 
     PROBLEM_KEYWORDS = [
         "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
-        "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수",
-        "문제"  # 🔧 비고 칸의 "문제 장소", "과거 문제 장소" 등을 잡기 위해 추가 ("문제없음"은 부정 표현으로 자동 제외됨)
+        "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수"
     ]
     # 🔧 "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
     NEGATION_TERMS = [
@@ -1113,7 +1112,14 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             return False
         return True
 
-    analysis_df["__문제여부"] = analysis_df["__유효결과"].apply(is_real_problem)
+    # 🔧 [신규] "문제 장소"/"과거 문제 장소"는 그 자체가 하나의 태그(분류)이지 키워드가 아니므로,
+    #    ①번 키워드 빈도에 넣지 않고 별도로 개수를 세고, 실제 내용은 점검결과 텍스트로 판단
+    is_problem_place_tag = bigo_text.str.contains("문제 장소", na=False, regex=False)
+    is_past_problem_place = is_problem_place_tag & bigo_text.str.contains("과거", na=False, regex=False)
+    is_current_problem_place = is_problem_place_tag & ~is_past_problem_place
+
+    text_based_problem = analysis_df["__유효결과"].apply(is_real_problem)
+    analysis_df["__문제여부"] = text_based_problem | is_problem_place_tag
     problem_rows_all = analysis_df[analysis_df["__문제여부"]]
 
     # ==========================================================
@@ -1153,6 +1159,48 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 )
     else:
         st.markdown("<p style='font-size:16px;color:#111;'>상태 항목을 찾을 수 없습니다.</p>", unsafe_allow_html=True)
+
+    # ==========================================================
+    # ⓪-1 [신규] 비고 '문제 장소' 태그 현황 — 개수 + 어떤 내용인지(점검결과 기반)
+    # ==========================================================
+    st.markdown("#### ⓪-1 비고 '문제 장소' 태그 현황", unsafe_allow_html=True)
+    tag_cnt_current = int(is_current_problem_place.sum())
+    tag_cnt_past = int(is_past_problem_place.sum())
+    if tag_cnt_current > 0 or tag_cnt_past > 0:
+        tag_cards_html = "<div style='display:flex; flex-wrap:wrap; gap:12px; margin-bottom:12px;'>"
+        tag_cards_html += (
+            f"<div style='flex:1; min-width:150px; border:2px solid #c0392b; border-radius:10px; padding:14px; text-align:center; background:#fff;'>"
+            f"<div style='font-size:15px; font-weight:700; color:#c0392b;'>문제 장소</div>"
+            f"<div style='font-size:28px; font-weight:900; color:#111;'>{tag_cnt_current}건</div></div>"
+        )
+        tag_cards_html += (
+            f"<div style='flex:1; min-width:150px; border:2px solid #8e44ad; border-radius:10px; padding:14px; text-align:center; background:#fff;'>"
+            f"<div style='font-size:15px; font-weight:700; color:#8e44ad;'>과거 문제 장소</div>"
+            f"<div style='font-size:28px; font-weight:900; color:#111;'>{tag_cnt_past}건</div></div>"
+        )
+        tag_cards_html += "</div>"
+        st.markdown(tag_cards_html, unsafe_allow_html=True)
+
+        # 태그가 붙은 행들의 실제 점검결과 내용을 나열해서, "무슨 문제였는지" 바로 보이게 함
+        tag_rows = analysis_df[is_problem_place_tag]
+        if len(tag_rows) > 0 and name_col_analysis and name_col_analysis in tag_rows.columns:
+            list_html = "<div style='display:flex; flex-direction:column; gap:6px;'>"
+            for _, trow in tag_rows.iterrows():
+                t_name = str(trow.get(name_col_analysis, ""))
+                t_result = str(trow.get(result_col, "")) if result_col else ""
+                t_tag = "과거 문제 장소" if bool(is_past_problem_place.loc[trow.name]) else "문제 장소"
+                tag_color = "#8e44ad" if t_tag == "과거 문제 장소" else "#c0392b"
+                list_html += (
+                    f"<div style='border-left:4px solid {tag_color}; padding:6px 10px; background:#fafafa;'>"
+                    f"<span style='font-size:15px; font-weight:800; color:#111;'>{t_name}</span> "
+                    f"<span style='font-size:12px; font-weight:700; color:{tag_color};'>· {t_tag}</span><br>"
+                    f"<span style='font-size:14px; color:#333;'>{t_result if t_result else '(점검결과 미기재)'}</span>"
+                    "</div>"
+                )
+            list_html += "</div>"
+            st.markdown(list_html, unsafe_allow_html=True)
+    else:
+        st.markdown("<p style='font-size:16px;color:#111;'>비고에 '문제 장소' 태그가 아직 없습니다.</p>", unsafe_allow_html=True)
 
     # 🎨 표를 크고 진하게 보여주기 위한 공통 HTML 렌더러 (Streamlit 기본 표는 글씨가 작고 흐려서 커스텀)
     #    ⚠️ 마크다운이 들여쓰기된 줄을 코드블럭으로 오인하지 않도록, HTML을 줄바꿈/들여쓰기 없이 한 줄로 이어붙임
