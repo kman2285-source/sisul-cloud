@@ -1090,10 +1090,22 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     valid_result_only = result_text.where((result_text != "") & (result_text != content_text), "")
     analysis_df["__유효결과"] = (valid_result_only + " " + bigo_text).str.strip()
 
-    PROBLEM_KEYWORDS = [
-        "토사", "막힘", "막음", "유입", "고장", "손상", "누수", "악취", "민원", "이탈",
-        "확인 필요", "조치 필요", "개선", "저하", "스크린", "결빙", "동파", "부식", "침수"
+    # 🔧 비슷한 표현을 하나로 묶고, ①번 표에는 "스크린 막힘/이물질"처럼 구체적인 이름으로 보여주기 위한 그룹 정의
+    PROBLEM_KEYWORD_GROUPS = [
+        ("스크린 막힘/이물질", ["스크린", "막힘", "막음"]),
+        ("토사·오수 유입", ["토사", "유입"]),
+        ("악취 발생", ["악취"]),
+        ("민원 발생", ["민원"]),
+        ("고장·손상·부식", ["고장", "손상", "부식"]),
+        ("누수", ["누수"]),
+        ("맨홀 이탈", ["이탈"]),
+        ("확인·조치 필요", ["확인 필요", "조치 필요"]),
+        ("개선·기능저하", ["개선", "저하"]),
+        ("동절기 피해(결빙/동파)", ["결빙", "동파"]),
+        ("침수", ["침수"]),
     ]
+    # is_real_problem() 등 개별 키워드 매칭에 쓰는 평면 목록 (기존 로직과 호환)
+    PROBLEM_KEYWORDS = [term for _, terms in PROBLEM_KEYWORD_GROUPS for term in terms]
     # 🔧 "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
     NEGATION_TERMS = [
         "이상없음", "이상 없음", "이상무", "이상 무", "문제없음", "문제 없음",
@@ -1228,10 +1240,10 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     with col_a:
         st.markdown("#### ① 문제 키워드 빈도 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과·비고 기준)</span>", unsafe_allow_html=True)
         kw_counts = {}
-        for kw in PROBLEM_KEYWORDS:
-            cnt = int(problem_rows_all["__유효결과"].str.contains(kw, na=False, regex=False).sum())
+        for label, terms in PROBLEM_KEYWORD_GROUPS:
+            cnt = int(problem_rows_all["__유효결과"].apply(lambda t: any(term in t for term in terms)).sum())
             if cnt > 0:
-                kw_counts[kw] = cnt
+                kw_counts[label] = cnt
         kw_pairs = sorted(kw_counts.items(), key=lambda x: -x[1])
         st.markdown(render_bold_bar_table(kw_pairs, unit="건", bar_color="#d64545"), unsafe_allow_html=True)
 
