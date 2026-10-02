@@ -1138,6 +1138,20 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     analysis_df["__문제여부"] = text_based_problem | is_problem_place_tag
     problem_rows_all = analysis_df[analysis_df["__문제여부"]]
 
+    # 🔧 "좌안1번"처럼 하천마다 겹칠 수 있는 시설명을 구분하기 위해, 지역(하천,지역)·사업처를 붙인 표시용 라벨 생성
+    def build_facility_label(row):
+        name = str(row.get(name_col_analysis, "")).strip() if name_col_analysis else ""
+        area = str(row.get(area_col, "")).strip() if area_col and area_col in analysis_df.columns else ""
+        biz = str(row.get(biz_col, "")).strip() if biz_col and biz_col in analysis_df.columns else ""
+        prefix = area if area and area.lower() != "nan" else (biz if biz and biz.lower() != "nan" else "")
+        if prefix and name:
+            return f"{prefix} · {name}"
+        return name
+
+    if name_col_analysis and name_col_analysis in analysis_df.columns:
+        analysis_df["__시설라벨"] = analysis_df.apply(build_facility_label, axis=1)
+        problem_rows_all = analysis_df[analysis_df["__문제여부"]]
+
     # ==========================================================
     # ⓪ [신규] 상태별 현황 — 정상/점검필요/정비중/조치완료 건수 + 주의가 필요한 행 번호(NO) 나열
     # ==========================================================
@@ -1253,8 +1267,8 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
 
     with col_b:
         st.markdown("#### ② 반복 확인된 문제 시설물 <span style='font-size:14px;color:#555;font-weight:400;'>(2회 이상)</span>", unsafe_allow_html=True)
-        if name_col_analysis and name_col_analysis in analysis_df.columns:
-            repeat_counts = problem_rows_all[name_col_analysis].value_counts()
+        if "__시설라벨" in analysis_df.columns:
+            repeat_counts = problem_rows_all["__시설라벨"].value_counts()
             repeat_counts = repeat_counts[(repeat_counts.index != "") & (repeat_counts >= 2)]
             repeat_pairs = list(repeat_counts.items())
             st.markdown(render_bold_bar_table(repeat_pairs, unit="회", bar_color="#c0392b"), unsafe_allow_html=True)
@@ -1314,8 +1328,9 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     date_col_analysis = next((c for c in col_order if "일" in c or "날짜" in c), None)
     type_col_analysis = next((c for c in col_order if "유형" in c), None)
 
-    if name_col_analysis and name_col_analysis in analysis_df.columns:
-        all_repeat_counts = analysis_df[name_col_analysis].value_counts()
+    if "__시설라벨" in analysis_df.columns:
+        # 🔧 이름만으로 묶으면 "좌안1번"처럼 다른 하천의 동명 시설물 이력이 섞일 수 있어, 지역을 붙인 라벨 기준으로 구분
+        all_repeat_counts = analysis_df["__시설라벨"].value_counts()
         all_repeat_counts = all_repeat_counts[(all_repeat_counts.index != "") & (all_repeat_counts >= 2)]
 
         if len(all_repeat_counts) > 0:
@@ -1328,7 +1343,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             selected_name = selected_history.rsplit(" (", 1)[0]
 
             hist_cols = [c for c in [date_col_analysis, type_col_analysis, content_col, result_col, bigo_col] if c and c in analysis_df.columns]
-            hist_df = analysis_df[analysis_df[name_col_analysis] == selected_name][hist_cols].copy()
+            hist_df = analysis_df[analysis_df["__시설라벨"] == selected_name][hist_cols].copy()
             if date_col_analysis and date_col_analysis in hist_df.columns:
                 hist_df = hist_df.sort_values(date_col_analysis)
 
