@@ -329,7 +329,11 @@ else:
     col_order = settings_snap.to_dict().get("column_order", [])
 
 # 2. Firebase 데이터 불러오기
-@st.cache_data(ttl=3)
+# 🔧 [비용 수정] ttl=3초였던 걸 60초로 늘림 — 위젯 조작(슬라이더/선택창 등)마다 전체 컬렉션을
+#    재조회하면서 Firestore 읽기 비용이 과도하게 발생하던 문제의 핵심 원인이었음.
+#    저장/수정 버튼을 누르면 st.cache_data.clear()로 즉시 갱신되므로, 평상시 조회 주기를
+#    늘려도 "내가 방금 저장한 내용이 안 보이는" 문제는 생기지 않음.
+@st.cache_data(ttl=60)
 def load_infra_data():
     docs = db.collection("infra_management").stream()
     data_list = []
@@ -1336,7 +1340,9 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 h_content = str(hrow.get(content_col, "")) if content_col else ""
                 h_result = str(hrow.get(result_col, "")) if result_col else ""
                 h_bigo = str(hrow.get(bigo_col, "")) if bigo_col else ""
-                is_prob = is_real_problem(((h_result if h_result and h_result != h_content else "") + " " + h_bigo).strip())
+                # 🔧 비고에 "문제 장소" 태그가 있으면, 점검결과에 키워드가 없어도 문제로 인정 (①~③, ⓪-1과 동일한 규칙)
+                h_has_tag = "문제 장소" in h_bigo
+                is_prob = h_has_tag or is_real_problem(((h_result if h_result and h_result != h_content else "") + " " + h_bigo).strip())
                 border_color = "#c0392b" if is_prob else "#ccc"
                 badge = "🔴 문제 확인" if is_prob else "⚪ 이상 없음/미기재"
                 timeline_html += (
