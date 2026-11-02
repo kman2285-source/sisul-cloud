@@ -1227,12 +1227,16 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     analysis_df["__유효결과"] = (valid_result_only + " " + bigo_text).str.strip()
 
     # 🔧 비슷한 표현을 하나로 묶고, ①번 표에는 "스크린 막힘/이물질"처럼 구체적인 이름으로 보여주기 위한 그룹 정의
+    # 🔧 스크린 막힘 판정: '스크린' 단독이 아니라 "스크린 + 막힘/이물질 계열 표현"이 함께 있을 때만 해당
+    BLOCK_TERMS = ["막힘", "막힌", "막혀", "막혔", "막음", "막았", "폐쇄", "이물질", "이물", "쓰레기",
+                   "낙엽", "협잡물", "부유물", "퇴적", "걸림", "걸려", "끼임", "끼어", "적체"]
     PROBLEM_KEYWORD_GROUPS = [
-        ("스크린 막힘/이물질", ["스크린", "막힘", "막음"]),
+        ("스크린 막힘/이물질", ["스크린"] + BLOCK_TERMS),
+        ("스크린 외 막힘/이물질", BLOCK_TERMS),
         ("토사·오수 유입", ["토사", "유입"]),
         ("악취 발생", ["악취"]),
         ("민원 발생", ["민원"]),
-        ("고장·손상·부식", ["고장", "손상", "부식"]),
+        ("고장·손상·부식·중성화", ["고장", "손상", "부식", "중성화"]),
         ("누수", ["누수"]),
         ("맨홀 이탈", ["이탈"]),
         ("확인·조치 필요", ["확인 필요", "조치 필요"]),
@@ -1241,11 +1245,22 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         ("침수", ["침수"]),
     ]
     # is_real_problem() 등 개별 키워드 매칭에 쓰는 평면 목록 (기존 로직과 호환)
-    PROBLEM_KEYWORDS = [term for _, terms in PROBLEM_KEYWORD_GROUPS for term in terms]
+    # '스크린' 단독 언급(예: "스크린 열림")은 문제로 보지 않으므로 평면 목록에서 제외
+    PROBLEM_KEYWORDS = [term for _, terms in PROBLEM_KEYWORD_GROUPS for term in terms if term != "스크린"]
+
+    def group_match(label, text):
+        """키워드 그룹별 해당 여부 (스크린 그룹은 '스크린' + 막힘계열 동시 필요, 기타 막힘 그룹은 스크린 없는 경우)"""
+        terms = dict(PROBLEM_KEYWORD_GROUPS)[label]
+        if label == "스크린 막힘/이물질":
+            return "스크린" in text and any(b in text for b in BLOCK_TERMS)
+        if label == "스크린 외 막힘/이물질":
+            return "스크린" not in text and any(b in text for b in BLOCK_TERMS)
+        return any(term in text for term in terms)
     # 🔧 "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
     NEGATION_TERMS = [
         "이상없음", "이상 없음", "이상무", "이상 무", "문제없음", "문제 없음",
-        "특이사항 없음", "특이사항없음", "양호", "정상"
+        "특이사항 없음", "특이사항없음", "양호", "정상",
+        "이물질 없음", "이물질없음", "막힘 없음", "막힘없음", "쓰레기 없음", "쓰레기없음"
     ]
 
     def is_real_problem(text):
@@ -1391,7 +1406,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         st.markdown("#### ① 문제 키워드 빈도 <span style='font-size:14px;color:#555;font-weight:400;'>(점검결과·비고 기준)</span>", unsafe_allow_html=True)
         kw_counts = {}
         for label, terms in PROBLEM_KEYWORD_GROUPS:
-            cnt = int(problem_rows_all["__유효결과"].apply(lambda t: any(term in t for term in terms)).sum())
+            cnt = int(problem_rows_all["__유효결과"].apply(lambda t, _l=label: group_match(_l, t)).sum())
             if cnt > 0:
                 kw_counts[label] = cnt
         kw_pairs = sorted(kw_counts.items(), key=lambda x: -x[1])
@@ -1402,7 +1417,7 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
         _date_col_kw = next((c for c in col_order if "일" in c or "날짜" in c), None)
         for kw_label, kw_cnt in kw_pairs:
             kw_terms = dict(PROBLEM_KEYWORD_GROUPS)[kw_label]
-            kw_rows = problem_rows_all[problem_rows_all["__유효결과"].apply(lambda t: any(term in t for term in kw_terms))]
+            kw_rows = problem_rows_all[problem_rows_all["__유효결과"].apply(lambda t, _l=kw_label: group_match(_l, t))]
             with st.expander(f"📋 {kw_label} {kw_cnt}건 — 목록 보기", expanded=False):
                 kw_html = "<div style='display:flex; flex-direction:column; gap:6px;'>"
                 for _, krow in kw_rows.iterrows():
