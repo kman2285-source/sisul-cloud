@@ -18,9 +18,10 @@ from streamlit_oauth import OAuth2Component  # 🔐 구글 OAuth 로그인용
 import io          # 엑셀 파일 생성용
 import xlsxwriter  # 엑셀 파일 생성 및 이미지 삽입용
 import requests    # 이미지 다운로드용
-from PIL import Image  # 🖼️ 이미지 실제 크기 계산 및 자동 축소용
+from PIL import Image, ImageOps  # 🖼️ 이미지 실제 크기 계산 및 자동 축소용
 from PIL.ExifTags import TAGS, GPSTAGS  # 🔧 사진 GPS 좌표 추출용
 import re  # 🔧 지도 URL에서 좌표 파싱용
+import hmac  # 🔐 비밀번호 안전 비교용
 from urllib.parse import quote  # 🔧 카카오맵 검색 링크용 URL 인코딩
 
 # 🏢 페이지 기본 설정
@@ -68,6 +69,13 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = st.secrets.get("REDIRECT_URI")
+
+# 🔐 운영 비밀번호: 소스코드 대신 Streamlit Secrets(APP_PASSWORD)에서 읽음 (미설정 시 기존 값으로 동작)
+APP_PASSWORD = st.secrets.get("APP_PASSWORD", "sisul123!")
+
+
+def check_password(pw):
+    return hmac.compare_digest(str(pw).encode("utf-8"), str(APP_PASSWORD).encode("utf-8"))
 
 # 🚨 구글 로그인 400 에러 방지용 안전장치
 if not CLIENT_ID or not REDIRECT_URI:
@@ -133,7 +141,7 @@ if not (st.session_state.google_auth and st.session_state.pw_auth):
                 password = st.text_input("비밀번호", type="password", placeholder="비밀번호 입력")
                 keep_logged_in = st.checkbox(f"이 브라우저에서 {LOGIN_PERSIST_DAYS}일간 로그인 유지", value=True)
                 if st.form_submit_button("최종 웹 접속하기", use_container_width=True):
-                    if password == "sisul123!":
+                    if check_password(password):
                         st.session_state.pw_auth = True
 
                         # 🍪 [신규] 로그인 유지 체크 시 쿠키에 30일짜리 인증 정보 저장
@@ -263,6 +271,56 @@ def extract_latlng_from_maps_url(url):
     return None
 
 
+# 🙈 이름 마스킹: "김재영,김민석" → "김*영,김*석" (쉼표/공백/슬래시로 구분된 여러 명 지원)
+def mask_one_name(name):
+    name = str(name).strip()
+    n = len(name)
+    if n <= 1:
+        return name
+    if n == 2:
+        return name[0] + "*"
+    return name[0] + "*" * (n - 2) + name[-1]
+
+
+def mask_names(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return value
+    text = str(value)
+    if not text.strip():
+        return value
+    return re.sub(r"[가-힣A-Za-z]+", lambda m: mask_one_name(m.group(0)), text)
+
+
+# 🙈 자유 입력 칸(점검내용/결과/비고)에 섞여 들어간 전화번호·주민번호·이메일 마스킹 (내보내기 파일용)
+_RRN_RE = re.compile(r"(?<!\d)\d{6}[-\s]?[1-4]\d{6}(?!\d)")
+_PHONE_RE = re.compile(r"(?<!\d)(01[016789]|0[2-6]\d?)[-.\s]?(\d{3,4})[-.\s]?(\d{4})(?!\d)")
+_EMAIL_RE = re.compile(r"([A-Za-z0-9._%+-])[A-Za-z0-9._%+-]*@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
+
+def mask_sensitive_text(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return value
+    text = str(value)
+    text = _RRN_RE.sub("******-*******", text)
+    text = _PHONE_RE.sub(lambda m: f"{m.group(1)}-****-{m.group(3)}", text)
+    text = _EMAIL_RE.sub(lambda m: f"{m.group(1)}***@{m.group(2)}", text)
+    return text
+
+
+# 🖼️ 업로드 사진의 EXIF(촬영 위치·기기정보 등) 제거 — GPS는 업로드 전에 이미 읽어 위치 칸에만 사용
+def strip_exif_to_jpeg(file_bytes):
+    try:
+        img = Image.open(io.BytesIO(file_bytes))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        return buf.getvalue()
+    except Exception:
+        return file_bytes
+
+
 def parse_timestamp(ts_str):
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
         try:
@@ -285,6 +343,24 @@ if not firebase_admin._apps:
 db = firestore.client()
 bucket = storage.bucket()
 
+
+# 📝 접속·열람·반출 기록 (개인정보 안전성 확보조치: 접속기록 보관)
+def log_access(action, detail=""):
+    try:
+        db.collection("access_log").add({
+            "시각": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "계정": st.session_state.get("user_email", ""),
+            "행위": action,
+            "상세": detail,
+        })
+    except Exception:
+        pass
+
+
+if not st.session_state.get("login_logged"):
+    log_access("로그인(세션 시작)")
+    st.session_state.login_logged = True
+
 st.title("📱 시설관리팀 운영 웹")
 st.markdown("---")
 
@@ -292,6 +368,8 @@ st.markdown("---")
 with st.sidebar:
     st.success(f"✅ 접속자: {st.session_state.user_email}")
     if st.button("🚪 안전 로그아웃", use_container_width=True):
+        log_access("로그아웃")
+        st.session_state.login_logged = False
         st.session_state.google_auth = False
         st.session_state.pw_auth = False
         st.session_state.user_email = ""
@@ -300,6 +378,31 @@ with st.sidebar:
         cookies["user_email"] = ""
         cookies.save()
         st.rerun()
+    st.markdown("---")
+
+    # 🙈 [신규] 개인정보 보호: 점검자(직원) 이름 가리기 (기본 켜짐)
+    mask_toggle_value = st.toggle(
+        "🙈 점검자 이름 가리기",
+        value=True,
+        key="mask_inspector_toggle",
+        help="켜면 표·CSV·엑셀에서 점검자 이름이 '김*석'처럼 표시됩니다. 원본 이름은 DB에 그대로 보관됩니다.",
+    )
+    if mask_toggle_value:
+        st.session_state.unmask_ok = False
+        mask_inspector_on = True
+    elif st.session_state.get("unmask_ok"):
+        mask_inspector_on = False
+    else:
+        mask_inspector_on = True
+        st.caption("🔒 이름을 보려면 운영 비밀번호를 다시 입력하세요.")
+        _unmask_pw = st.text_input("비밀번호 재확인", type="password", key="unmask_pw")
+        if _unmask_pw:
+            if check_password(_unmask_pw):
+                st.session_state.unmask_ok = True
+                log_access("점검자 이름 가리기 해제")
+                st.rerun()
+            else:
+                st.error("비밀번호가 일치하지 않습니다.")
     st.markdown("---")
 
     st.subheader("☁️ 클라우드 저장소 상태")
@@ -383,6 +486,14 @@ for dc in date_cols:
 # NO 세팅
 df.insert(0, "NO", range(1, len(df) + 1))
 display_order = ["NO"] + col_order
+
+# 🙈 점검자 열 찾기 + 화면/내보내기용 마스킹 사본 생성 (원본 df와 DB는 그대로 유지)
+inspector_col = next((c for c in col_order if "점검자" in c or "점검원" in c or "직원" in c), None)
+mask_active = bool(mask_inspector_on and inspector_col and inspector_col in df.columns)
+sensitive_text_cols = [c for c in col_order if any(k in c for k in ["내용", "결과", "비고"])]
+df_view = df.copy()
+if mask_active:
+    df_view[inspector_col] = df_view[inspector_col].map(mask_names)
 
 # 고급 설정 메뉴
 with st.expander("⚙️ 고급 설정: 표 항목(열) 및 행(줄) 관리 기능", expanded=False):
@@ -569,6 +680,8 @@ st.markdown("---")
 col_title, col_save = st.columns([7, 3])
 with col_title:
     st.subheader("📊 하수관로 시설물 점검이력대장 (엑셀 형태)")
+    if mask_active:
+        st.caption("🙈 점검자 이름 가리기가 켜져 있습니다 (표·CSV·엑셀 모두 가려진 상태로 표시/저장됩니다).")
     st.caption("💡 **Tip:** 표 우측 상단의 확대(⛶)로 넓게 작업하신 후, **축소(ESC)해서 우측 [일괄 저장]**을 누르세요. 창을 줄여도 작성한 내용은 유지됩니다!")
 with col_save:
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
@@ -585,7 +698,10 @@ dynamic_config = {
 }
 
 for c in col_order:
-    if "상태" in c:
+    if mask_active and c == inspector_col:
+        # 마스킹된 값이 DB에 덮어써지지 않도록 읽기 전용 처리
+        dynamic_config[c] = st.column_config.TextColumn(c, disabled=True, help="🙈 이름 가리기 켜짐 — 수정하려면 사이드바에서 끄세요")
+    elif "상태" in c:
         dynamic_config[c] = st.column_config.SelectboxColumn(c, options=["정상", "점검필요", "정비중", "조치완료"])
     elif any(keyword in c for keyword in ["사진", "URL", "링크"]):
         dynamic_config[c] = st.column_config.ImageColumn(c, help="📸 현장 점검 사진 미리보기")
@@ -598,10 +714,10 @@ for c in col_order:
     elif any(keyword in c for keyword in ["비고", "결과"]):
         dynamic_config[c] = st.column_config.TextColumn(c, width="large")
 
-editor_key = f"infra_table_editor_{st.session_state.table_version}"
+editor_key = f"infra_table_editor_{st.session_state.table_version}_{int(mask_active)}"
 
 edited_df = st.data_editor(
-    df,
+    df_view,
     column_order=display_order,
     column_config=dynamic_config,
     num_rows="dynamic",
@@ -612,6 +728,9 @@ edited_df = st.data_editor(
 
 st.markdown(" ")
 export_df = edited_df[display_order].copy()
+for _c in sensitive_text_cols:
+    if _c in export_df.columns:
+        export_df[_c] = export_df[_c].map(mask_sensitive_text)  # 🙈 전화번호·주민번호·이메일 자동 마스킹
 
 col_down1, col_down2 = st.columns(2)
 
@@ -623,7 +742,9 @@ with col_down1:
         file_name=f"하수관로_시설물_점검이력대장_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
         use_container_width=True,
-        type="secondary"
+        type="secondary",
+        on_click=log_access,
+        args=("CSV 다운로드", f"이름가리기={mask_active}"),
     )
 
 with col_down2:
@@ -736,10 +857,13 @@ with col_down2:
                             worksheet.write(row_num + 1, col_num, "", cell_format)
                     else:
                         val = str(val_data) if val_data is not None else ""
+                        if col_name in sensitive_text_cols:
+                            val = mask_sensitive_text(val)
                         worksheet.write(row_num + 1, col_num, val, cell_format)
 
             workbook.close()
             st.session_state.excel_output = output.getvalue()
+            log_access("엑셀 생성", f"이름가리기={mask_active}")
 
         st.success("✅ 엑셀 파일 생성이 완료되었습니다! 아래 버튼을 눌러 저장하세요.")
 
@@ -750,7 +874,9 @@ with col_down2:
             file_name=f"하수관로_시설물_점검이력대장_사진포함_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            type="primary"
+            type="primary",
+            on_click=log_access,
+            args=("엑셀 다운로드", f"이름가리기={mask_active}"),
         )
 
 # 4. 수동 일괄 저장 로직
@@ -767,6 +893,9 @@ if save_btn:
 
             if photo_col and photo_col in changes and (changes[photo_col] is None or str(changes[photo_col]).strip() == ""):
                 changes[photo_col] = []
+
+            if mask_active and inspector_col in changes:
+                del changes[inspector_col]  # 🙈 마스킹된 이름이 원본을 덮어쓰지 않게 차단
 
             for k, v in list(changes.items()):
                 if isinstance(v, type(datetime.now().date())):
@@ -939,10 +1068,13 @@ if photo_col:
                 accept_multiple_files=True
             )
             overwrite_gps = st.checkbox("📍 위치 칸에 이미 값이 있어도 새 사진의 GPS 좌표로 덮어쓰기", value=False)
+            privacy_ok = st.checkbox("🔒 사진에 사람 얼굴·차량번호판·명찰·서류 등 개인정보가 찍히지 않았음을 확인했습니다", value=False)
             submit_upload = st.form_submit_button("🚀 선택한 모든 사진 추가 등록", type="primary", use_container_width=True)
 
             if submit_upload:
-                if uploaded_files:
+                if uploaded_files and not privacy_ok:
+                    st.warning("개인정보(얼굴·차량번호판 등) 미포함 확인란에 체크해야 등록할 수 있습니다.")
+                elif uploaded_files:
                     with st.spinner("모든 이미지 서버 전송 중..."):
                         try:
                             new_urls = []
@@ -958,10 +1090,10 @@ if photo_col:
                                     detected_latlng = gps_result
 
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.png"
+                                file_name = f"infra_photos/{target_doc_id}_{timestamp}_{idx}.jpg"
 
                                 blob = bucket.blob(file_name)
-                                blob.upload_from_string(file_bytes, content_type="image/png")
+                                blob.upload_from_string(strip_exif_to_jpeg(file_bytes), content_type="image/jpeg")
                                 blob.make_public()
                                 new_urls.append(blob.public_url)
 
@@ -1264,6 +1396,32 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
                 kw_counts[label] = cnt
         kw_pairs = sorted(kw_counts.items(), key=lambda x: -x[1])
         st.markdown(render_bold_bar_table(kw_pairs, unit="건", bar_color="#d64545"), unsafe_allow_html=True)
+
+        # 📋 [신규] 키워드별 해당 기록 목록 — "13건이 어떤 시설물인지" 바로 확인 (건수와 목록은 같은 규칙으로 계산되어 항상 일치)
+        import html as _html
+        _date_col_kw = next((c for c in col_order if "일" in c or "날짜" in c), None)
+        for kw_label, kw_cnt in kw_pairs:
+            kw_terms = dict(PROBLEM_KEYWORD_GROUPS)[kw_label]
+            kw_rows = problem_rows_all[problem_rows_all["__유효결과"].apply(lambda t: any(term in t for term in kw_terms))]
+            with st.expander(f"📋 {kw_label} {kw_cnt}건 — 목록 보기", expanded=False):
+                kw_html = "<div style='display:flex; flex-direction:column; gap:6px;'>"
+                for _, krow in kw_rows.iterrows():
+                    k_no = krow.get("NO", "")
+                    k_name = krow["__시설라벨"] if "__시설라벨" in kw_rows.columns else (krow.get(name_col_analysis, "") if name_col_analysis else "")
+                    k_date = krow.get(_date_col_kw, "") if _date_col_kw else ""
+                    k_text = str(krow.get("__유효결과", ""))
+                    for term in kw_terms:  # 해당 문구를 굵은 붉은색으로 강조
+                        k_text = k_text.replace(term, f"\u0000{term}\u0001")
+                    k_text = _html.escape(k_text).replace("\u0000", "<b style='color:#c0392b;'>").replace("\u0001", "</b>")
+                    kw_html += (
+                        "<div style='border-left:4px solid #d64545; padding:6px 10px; background:#fafafa;'>"
+                        f"<span style='font-size:13px; color:#666;'>NO {k_no} · {k_date}</span><br>"
+                        f"<span style='font-size:15px; font-weight:800; color:#111;'>{_html.escape(str(k_name))}</span><br>"
+                        f"<span style='font-size:14px; color:#333;'>{k_text}</span>"
+                        "</div>"
+                    )
+                kw_html += "</div>"
+                st.markdown(kw_html, unsafe_allow_html=True)
 
     with col_b:
         st.markdown("#### ② 반복 확인된 문제 시설물 <span style='font-size:14px;color:#555;font-weight:400;'>(2회 이상)</span>", unsafe_allow_html=True)
