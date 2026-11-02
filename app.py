@@ -1227,19 +1227,17 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     analysis_df["__유효결과"] = (valid_result_only + " " + bigo_text).str.strip()
 
     # 🔧 비슷한 표현을 하나로 묶고, ①번 표에는 "스크린 막힘/이물질"처럼 구체적인 이름으로 보여주기 위한 그룹 정의
-    # 🔧 스크린 막힘 판정: '스크린' 단독이 아니라 "스크린 + 막힘/이물질 계열 표현"이 함께 있을 때만 해당
+    # 🔧 스크린 막힘 판정: '스크린' 단독 언급은 제외하고, 막힘/이물질 계열 표현이 있으면 해당
     BLOCK_TERMS = ["막힘", "막힌", "막혀", "막혔", "막음", "막았", "폐쇄", "이물질", "이물", "쓰레기",
                    "낙엽", "협잡물", "부유물", "퇴적", "걸림", "걸려", "끼임", "끼어", "적체"]
     PROBLEM_KEYWORD_GROUPS = [
-        ("스크린 막힘/이물질", ["스크린"] + BLOCK_TERMS),
-        ("스크린 외 막힘/이물질", BLOCK_TERMS),
+        ("스크린 막힘/이물질", ["스크린"] + BLOCK_TERMS),  # 막힘/이물질 계열 표현이 있으면 스크린 언급 여부와 관계없이 포함
         ("토사·오수 유입", ["토사", "유입"]),
         ("악취 발생", ["악취"]),
         ("민원 발생", ["민원"]),
         ("고장·손상·부식·중성화", ["고장", "손상", "부식", "중성화"]),
         ("누수", ["누수"]),
         ("맨홀 이탈", ["이탈"]),
-        ("확인·조치 필요", ["확인 필요", "조치 필요"]),
         ("개선·기능저하", ["개선", "저하"]),
         ("동절기 피해(결빙/동파)", ["결빙", "동파"]),
         ("침수", ["침수"]),
@@ -1249,12 +1247,10 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
     PROBLEM_KEYWORDS = [term for _, terms in PROBLEM_KEYWORD_GROUPS for term in terms if term != "스크린"]
 
     def group_match(label, text):
-        """키워드 그룹별 해당 여부 (스크린 그룹은 '스크린' + 막힘계열 동시 필요, 기타 막힘 그룹은 스크린 없는 경우)"""
+        """키워드 그룹별 해당 여부 (스크린 막힘/이물질 그룹은 막힘·이물질 계열 표현만 있으면 해당)"""
         terms = dict(PROBLEM_KEYWORD_GROUPS)[label]
         if label == "스크린 막힘/이물질":
-            return "스크린" in text and any(b in text for b in BLOCK_TERMS)
-        if label == "스크린 외 막힘/이물질":
-            return "스크린" not in text and any(b in text for b in BLOCK_TERMS)
+            return any(b in text for b in BLOCK_TERMS)
         return any(term in text for term in terms)
     # 🔧 "이탈 확인 - 이상 없음"처럼 문제 단어가 있어도 결론이 부정형이면 진짜 문제가 아니므로 제외
     NEGATION_TERMS = [
@@ -1378,6 +1374,42 @@ with st.expander("🚨 반복 문제 및 예방 안전활동 분석 (자동)", e
             st.markdown(list_html, unsafe_allow_html=True)
     else:
         st.markdown("<p style='font-size:16px;color:#111;'>비고에 '문제 장소' 태그가 아직 없습니다.</p>", unsafe_allow_html=True)
+
+    # 📌 [신규] 확인·조치 필요 기재 현황 — 문제 키워드 집계와 별도로, 점검결과·비고에 "확인 필요/조치 필요"가 적힌 기록만 따로 모아 표시
+    st.markdown("#### ⓪-2 확인·조치 필요 기재 현황 <span style='font-size:14px;color:#555;font-weight:400;'>(문제 집계와 별도)</span>", unsafe_allow_html=True)
+    import html as _html2
+    TODO_TERMS = ["확인 필요", "조치 필요"]
+    todo_mask = analysis_df["__유효결과"].apply(
+        lambda t: any(term in t for term in TODO_TERMS) and not any(neg in t for neg in NEGATION_TERMS)
+    )
+    todo_rows = analysis_df[todo_mask]
+    st.markdown(
+        "<div style='border:3px solid #e67e22; border-radius:10px; padding:10px 14px; background:#fffaf3; display:inline-block; min-width:220px;'>"
+        "<div style='font-size:15px; font-weight:700; color:#e67e22;'>확인·조치 필요 기재</div>"
+        f"<div style='font-size:28px; font-weight:900; color:#111;'>{len(todo_rows)}건</div></div>",
+        unsafe_allow_html=True,
+    )
+    if len(todo_rows) > 0:
+        _date_col_todo = next((c for c in col_order if "일" in c or "날짜" in c), None)
+        with st.expander(f"📋 확인·조치 필요 {len(todo_rows)}건 — 목록 보기", expanded=False):
+            todo_html = "<div style='display:flex; flex-direction:column; gap:6px;'>"
+            for _, trow in todo_rows.iterrows():
+                t_no = trow.get("NO", "")
+                t_name = trow["__시설라벨"] if "__시설라벨" in todo_rows.columns else (trow.get(name_col_analysis, "") if name_col_analysis else "")
+                t_date = trow.get(_date_col_todo, "") if _date_col_todo else ""
+                t_text = str(trow.get("__유효결과", ""))
+                for term in TODO_TERMS:
+                    t_text = t_text.replace(term, f"\u0000{term}\u0001")
+                t_text = _html2.escape(t_text).replace("\u0000", "<b style='color:#e67e22;'>").replace("\u0001", "</b>")
+                todo_html += (
+                    "<div style='border-left:4px solid #e67e22; padding:6px 10px; background:#fafafa;'>"
+                    f"<span style='font-size:13px; color:#666;'>NO {t_no} · {t_date}</span><br>"
+                    f"<span style='font-size:15px; font-weight:800; color:#111;'>{_html2.escape(str(t_name))}</span><br>"
+                    f"<span style='font-size:14px; color:#333;'>{t_text}</span>"
+                    "</div>"
+                )
+            todo_html += "</div>"
+            st.markdown(todo_html, unsafe_allow_html=True)
 
     # 🎨 표를 크고 진하게 보여주기 위한 공통 HTML 렌더러 (Streamlit 기본 표는 글씨가 작고 흐려서 커스텀)
     #    ⚠️ 마크다운이 들여쓰기된 줄을 코드블럭으로 오인하지 않도록, HTML을 줄바꿈/들여쓰기 없이 한 줄로 이어붙임
